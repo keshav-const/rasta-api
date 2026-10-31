@@ -1,0 +1,4 @@
+.env
+/rasta-api
+/bin/
+*.out
