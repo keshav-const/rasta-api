@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -69,6 +70,31 @@ func main() {
 			}
 			httpx.JSON(w, http.StatusOK, st, nil)
 		})
+
+		// GET /v1/places?city=&country=&category=&type=&q=&min_sources=&limit=&offset=
+		r.Get("/places", func(w http.ResponseWriter, req *http.Request) {
+			q := req.URL.Query()
+			limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
+			offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
+			params := store.PlacesParams{
+				City:       q.Get("city"),
+				Country:    q.Get("country"),
+				Category:   q.Get("category"),
+				EntityType: q.Get("type"),
+				Q:          q.Get("q"),
+				MinSources: atoiOr(q.Get("min_sources"), 0),
+				Limit:      limit,
+				Offset:     offset,
+			}
+			places, err := db.ListPlaces(req.Context(), params)
+			if err != nil {
+				log.Printf("places: %v", err)
+				httpx.Error(w, http.StatusInternalServerError, "internal", "could not load places")
+				return
+			}
+			meta := map[string]any{"count": len(places), "limit": limit, "offset": offset}
+			httpx.JSON(w, http.StatusOK, places, meta)
+		})
 	})
 
 	srv := &http.Server{
@@ -95,4 +121,30 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(shutdownCtx)
+}
+
+// atoiOr parses s as an int, falling back to def on empty/invalid input — so a
+// missing or junk ?limit= never errors the request, it just uses the default.
+func atoiOr(s string, def int) int {
+	if n, err := strconv.Atoi(s); err == nil {
+		return n
+	}
+	return def
+}
+
+func clampInt(n, lo, hi int) int {
+	if n < lo {
+		return lo
+	}
+	if n > hi {
+		return hi
+	}
+	return n
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }
