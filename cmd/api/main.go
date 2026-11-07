@@ -95,6 +95,26 @@ func main() {
 			meta := map[string]any{"count": len(places), "limit": limit, "offset": offset}
 			httpx.JSON(w, http.StatusOK, places, meta)
 		})
+
+		// GET /v1/places/{slug} — one place with all its sourced evidence.
+		// This is the "receipts" endpoint: the moat of the whole product is that
+		// every place can show exactly which creators/sources backed it and what
+		// they claimed. {slug} is a URL path parameter, pulled with chi.URLParam.
+		r.Get("/places/{slug}", func(w http.ResponseWriter, req *http.Request) {
+			slug := chi.URLParam(req, "slug")
+			place, err := db.GetPlace(req.Context(), slug)
+			if err != nil {
+				log.Printf("place %q: %v", slug, err)
+				httpx.Error(w, http.StatusInternalServerError, "internal", "could not load place")
+				return
+			}
+			if place == nil {
+				httpx.Error(w, http.StatusNotFound, "not_found", "no place with that slug")
+				return
+			}
+			meta := map[string]any{"evidence_count": len(place.Evidence)}
+			httpx.JSON(w, http.StatusOK, place, meta)
+		})
 	})
 
 	srv := &http.Server{

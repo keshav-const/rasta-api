@@ -8,9 +8,13 @@ package store
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -132,4 +136,95 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 		places = append(places, pl)
 	}
 	return places, rows.Err() // surface any error that ended the iteration
+}
+
+// --- Place detail + evidence (the "receipts" endpoint) ---------------------
+
+// Evidence is one source's testimony about a place: which source said it, how it
+// framed the place (stance), and the structured claims it made. This is Rasta's
+// moat — every place is backed by citable evidence, not anonymous star ratings.
+type Evidence struct {
+	Source     EvidenceSource  `json:"source"`
+	Stance     string          `json:"stance"` // recommended | mentioned | warned_against | mixed
+	Strength   *float64        `json:"strength"`
+	Confidence *float64        `json:"confidence"`
+	// Claims is passed through verbatim from the DB (jsonb): each is roughly
+	// {field, value, evidence, timestamp_seconds, confidence}. We keep it as raw
+	// JSON so the API never silently drops a claim field the extractor added.
+	Claims json.RawMessage `json:"claims"`
+}
+
+// EvidenceSource is the citation itself: where a claim came from and who made it.
+type EvidenceSource struct {
+	Platform   string  `json:"platform"` // youtube | wikipedia | blog | podcast
+	Title      *string `json:"title"`
+	URL        string  `json:"url"`
+	Creator    *string `json:"creator"`
+	UploadDate *string `json:"upload_date"` // YYYY-MM-DD, nullable
+}
+
+// PlaceDetail is one place plus every source that backs it.
+type PlaceDetail struct {
+	Place
+	Evidence []Evidence `json:"evidence"`
+}
+
+// GetPlace returns one active place by slug together with all of its evidence,
+// or (nil, nil) when no active place has that slug — the handler turns that into
+// a 404. Slugs are unique per destination, not globally (see the init schema's
+// `unique(destination_id, slug)`), so if two cities happen to share a slug we
+// return the highest-scored one. Two short queries, each over one pooled
+// connection: the place row, then its evidence rows — we never hold a connection
+// across other work.
+func (s *Store) GetPlace(ctx context.Context, slug string) (*PlaceDetail, error) {
+	var d PlaceDetail
+	var id string // POI uuid, needed for the evidence query
+	err := s.pool.QueryRow(ctx, `
+		select poi.id, poi.slug, poi.name, poi.entity_type, poi.poi_category,
+		       dd.slug, dd.country, poi.lat, poi.lng,
+		       poi.frequency_count, coalesce(poi.recommendation_score, 0)
+		from points_of_interest poi
+		join destinations dd on dd.id = poi.destination_id
+		where poi.is_active and poi.slug = $1
+		order by poi.recommendation_score desc nulls last, poi.id
+		limit 1`, slug).Scan(
+		&id, &d.Slug, &d.Name, &d.EntityType, &d.Category,
+		&d.City, &d.Country, &d.Lat, &d.Lng, &d.Sources, &d.Score,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil // not found, not an error
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		select src.platform, src.title, src.url, src.creator_name, ee.source_upload_date,
+		       ee.stance, ee.recommendation_strength, ee.extraction_confidence, ee.claims
+		from entity_evidence ee
+		join sources src on src.id = ee.source_id
+		where ee.entity_id = $1
+		order by ee.recommendation_strength desc nulls last, ee.created_at desc`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	d.Evidence = make([]Evidence, 0) // [] not null when a place somehow has none
+	for rows.Next() {
+		var ev Evidence
+		var upload *time.Time // DB `date` scans into time.Time; may be NULL
+		if err := rows.Scan(
+			&ev.Source.Platform, &ev.Source.Title, &ev.Source.URL, &ev.Source.Creator,
+			&upload, &ev.Stance, &ev.Strength, &ev.Confidence, &ev.Claims,
+		); err != nil {
+			return nil, err
+		}
+		if upload != nil {
+			day := upload.Format("2006-01-02")
+			ev.Source.UploadDate = &day
+		}
+		d.Evidence = append(d.Evidence, ev)
+	}
+	return &d, rows.Err()
 }
