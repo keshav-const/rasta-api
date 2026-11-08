@@ -228,3 +228,87 @@ func (s *Store) GetPlace(ctx context.Context, slug string) (*PlaceDetail, error)
 	}
 	return &d, rows.Err()
 }
+
+// --- Cities (destinations) -------------------------------------------------
+
+// City is one destination — a country/state/city/region the graph anchors
+// entities to — with a LIVE count of the active entities anchored to it.
+type City struct {
+	Slug    string   `json:"slug"`
+	Name    string   `json:"name"`
+	Type    string   `json:"type"` // country | state | city | region
+	Country string   `json:"country"`
+	Lat     *float64 `json:"lat"`
+	Lng     *float64 `json:"lng"`
+	Places  int      `json:"places"` // active entities anchored here (live count)
+}
+
+// CitiesParams are the filters + paging for ListCities. Zero = not set.
+type CitiesParams struct {
+	Country   string // e.g. "India"
+	Type      string // country | state | city | region
+	Q         string // name search
+	MinPlaces int    // only destinations with >= N active entities
+	Limit     int
+	Offset    int
+}
+
+// ListCities returns destinations with a live count of their active entities,
+// busiest first. It GROUPs the places table by destination and counts — the
+// count lives in the ON clause (not WHERE) so a destination with zero active
+// places still comes back with places=0 (a LEFT JOIN that WHERE-filtered the
+// right side would instead drop those rows). min_places is an aggregate filter,
+// so it goes in HAVING, not WHERE — still fully parameterized.
+func (s *Store) ListCities(ctx context.Context, p CitiesParams) ([]City, error) {
+	where := []string{"true"}
+	var args []any
+	add := func(condFmt string, val any) {
+		args = append(args, val)
+		where = append(where, fmt.Sprintf(condFmt, len(args)))
+	}
+	if p.Country != "" {
+		add("d.country = $%d", p.Country)
+	}
+	if p.Type != "" {
+		add("d.type = $%d", p.Type)
+	}
+	if p.Q != "" {
+		add("d.name ILIKE '%%' || $%d || '%%'", p.Q)
+	}
+
+	having := ""
+	if p.MinPlaces > 0 {
+		args = append(args, p.MinPlaces)
+		having = fmt.Sprintf("having count(poi.id) >= $%d", len(args))
+	}
+
+	args = append(args, p.Limit, p.Offset)
+	query := fmt.Sprintf(`
+		select d.slug, d.name, d.type, d.country, d.lat, d.lng,
+		       count(poi.id) as places
+		from destinations d
+		left join points_of_interest poi
+		       on poi.destination_id = d.id and poi.is_active
+		where %s
+		group by d.id
+		%s
+		order by places desc, d.name
+		limit $%d offset $%d`,
+		strings.Join(where, " and "), having, len(args)-1, len(args))
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	cities := make([]City, 0)
+	for rows.Next() {
+		var c City
+		if err := rows.Scan(&c.Slug, &c.Name, &c.Type, &c.Country, &c.Lat, &c.Lng, &c.Places); err != nil {
+			return nil, err
+		}
+		cities = append(cities, c)
+	}
+	return cities, rows.Err()
+}

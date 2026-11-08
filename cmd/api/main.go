@@ -115,6 +115,30 @@ func main() {
 			meta := map[string]any{"evidence_count": len(place.Evidence)}
 			httpx.JSON(w, http.StatusOK, place, meta)
 		})
+
+		// GET /v1/cities?country=&type=&q=&min_places=&limit=&offset=
+		// Destinations with a live count of the active entities anchored to each.
+		r.Get("/cities", func(w http.ResponseWriter, req *http.Request) {
+			q := req.URL.Query()
+			limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
+			offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
+			params := store.CitiesParams{
+				Country:   q.Get("country"),
+				Type:      q.Get("type"),
+				Q:         q.Get("q"),
+				MinPlaces: atoiOr(q.Get("min_places"), 0),
+				Limit:     limit,
+				Offset:    offset,
+			}
+			cities, err := db.ListCities(req.Context(), params)
+			if err != nil {
+				log.Printf("cities: %v", err)
+				httpx.Error(w, http.StatusInternalServerError, "internal", "could not load cities")
+				return
+			}
+			meta := map[string]any{"count": len(cities), "limit": limit, "offset": offset}
+			httpx.JSON(w, http.StatusOK, cities, meta)
+		})
 	})
 
 	srv := &http.Server{
