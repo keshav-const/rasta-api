@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -45,6 +46,45 @@ func (s *Store) Stats(ctx context.Context) (Stats, error) {
 	return st, err
 }
 
+// Trust is Rasta's provenance signal — how well-sourced an entity is, as opposed
+// to how good the place is (that's Score). This is the product's headline: you can
+// see, and filter by, how strongly a fact is corroborated.
+type Trust struct {
+	Sources      int     `json:"sources"`       // distinct sources backing it
+	Platforms    int     `json:"platforms"`     // distinct platforms (cross-platform = stronger)
+	LatestSource *string `json:"latest_source"` // YYYY-MM-DD of the newest source, nullable
+	Score        float64 `json:"score"`         // 0..1 corroboration score (see computeTrust)
+}
+
+// computeTrust turns the raw provenance counts into a 0..1 corroboration score.
+// It deliberately rewards INDEPENDENT corroboration over a single loud source:
+//   - breadth   (0.55): more distinct sources — saturates at 4
+//   - diversity (0.25): more distinct PLATFORMS — a YouTube+Wikipedia+blog claim
+//                       is far more trustworthy than three of the same kind
+//   - recency   (0.20): newer sources; full within ~1y, decaying to 0 over ~5y more
+// The weights live here (not in the DB) so they're one testable place to tune.
+func computeTrust(sources, platforms int, latest *time.Time) Trust {
+	breadth := math.Min(float64(sources), 4) / 4
+	diversity := math.Min(float64(platforms-1), 2) / 2 // 1 platform -> 0, 3+ -> 1
+	recency := 0.0
+	var latestStr *string
+	if latest != nil {
+		ageDays := time.Since(*latest).Hours() / 24
+		recency = clamp01(1 - (ageDays-365)/1825) // >=1y old starts decaying; ~6y -> 0
+		s := latest.Format("2006-01-02")
+		latestStr = &s
+	}
+	score := 0.55*breadth + 0.25*diversity + 0.20*recency
+	return Trust{
+		Sources:      sources,
+		Platforms:    platforms,
+		LatestSource: latestStr,
+		Score:        math.Round(score*100) / 100,
+	}
+}
+
+func clamp01(x float64) float64 { return math.Max(0, math.Min(1, x)) }
+
 // Place is one graph entity as the API exposes it. Pointer fields (*string,
 // *float64) are nullable: a cultural entity has no category, and an un-geocoded
 // place has no lat/lng — those come back as JSON null instead of 0/"".
@@ -59,19 +99,22 @@ type Place struct {
 	Lng        *float64 `json:"lng"`
 	Sources    int      `json:"sources"`
 	Score      float64  `json:"score"`
+	Trust      Trust    `json:"trust"`
 }
 
 // PlacesParams are the supported filters + paging for ListPlaces. Zero values
 // mean "not set" (empty string / 0), so callers only fill what they need.
 type PlacesParams struct {
-	City       string // destination slug, e.g. "jaipur"
-	Country    string // e.g. "India"
-	Category   string // poi_category, e.g. "temple"
-	EntityType string // poi | activity | festival | craft | art_form | ...
-	Q          string // name search
-	MinSources int    // only places backed by >= N sources
-	Limit      int
-	Offset     int
+	City         string // destination slug, e.g. "jaipur"
+	Country      string // e.g. "India"
+	Category     string // poi_category, e.g. "temple"
+	EntityType   string // poi | activity | festival | craft | art_form | ...
+	Q            string // name search
+	MinSources   int    // only places backed by >= N distinct sources
+	MinPlatforms int    // only places corroborated across >= N distinct platforms
+	Sort         string // "" (recommendation score) | "trust" (best-corroborated first)
+	Limit        int
+	Offset       int
 }
 
 // ListPlaces returns active entities matching the filters, highest-scored first.
@@ -101,21 +144,44 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 	if p.MinSources > 0 {
 		add("poi.frequency_count >= $%d", p.MinSources)
 	}
+	if p.MinPlatforms > 0 {
+		add("ev.plats >= $%d", p.MinPlatforms) // references the lateral below
+	}
 	if p.Q != "" {
 		add("poi.name ILIKE '%%' || $%d || '%%'", p.Q) // %% is a literal % after fmt
 	}
 
+	// Sort: best-corroborated first when asked, else recommendation score.
+	orderBy := "poi.recommendation_score desc nulls last, poi.id"
+	if p.Sort == "trust" {
+		orderBy = "ev.plats desc nulls last, ev.src desc nulls last, " +
+			"poi.recommendation_score desc nulls last, poi.id"
+	}
+
 	args = append(args, p.Limit, p.Offset)
+	// The lateral computes per-entity provenance (distinct sources, distinct
+	// platforms, newest source date) from the evidence. idx_evidence_entity makes
+	// each one an index lookup; the graph is small, so this is ms-scale. If it ever
+	// gets hot, precompute these into columns during scoring (see DECISIONS ADR-007).
 	query := fmt.Sprintf(`
 		select poi.slug, poi.name, poi.entity_type, poi.poi_category,
 		       d.slug, d.country, poi.lat, poi.lng,
-		       poi.frequency_count, coalesce(poi.recommendation_score, 0)
+		       coalesce(ev.src, 0), coalesce(ev.plats, 0), ev.latest,
+		       coalesce(poi.recommendation_score, 0)
 		from points_of_interest poi
 		join destinations d on d.id = poi.destination_id
+		left join lateral (
+			select count(distinct ee.source_id) as src,
+			       count(distinct s.platform)   as plats,
+			       max(coalesce(ee.source_upload_date, s.upload_date)) as latest
+			from entity_evidence ee
+			join sources s on s.id = ee.source_id
+			where ee.entity_id = poi.id
+		) ev on true
 		where %s
-		order by poi.recommendation_score desc nulls last, poi.id
+		order by %s
 		limit $%d offset $%d`,
-		strings.Join(where, " and "), len(args)-1, len(args))
+		strings.Join(where, " and "), orderBy, len(args)-1, len(args))
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -126,13 +192,16 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 	places := make([]Place, 0) // non-nil empty slice -> serializes as [] not null
 	for rows.Next() {
 		var pl Place
+		var plats int
+		var latest *time.Time
 		if err := rows.Scan(
 			&pl.Slug, &pl.Name, &pl.EntityType, &pl.Category,
 			&pl.City, &pl.Country, &pl.Lat, &pl.Lng,
-			&pl.Sources, &pl.Score,
+			&pl.Sources, &plats, &latest, &pl.Score,
 		); err != nil {
 			return nil, err
 		}
+		pl.Trust = computeTrust(pl.Sources, plats, latest)
 		places = append(places, pl)
 	}
 	return places, rows.Err() // surface any error that ended the iteration
@@ -211,6 +280,8 @@ func (s *Store) GetPlace(ctx context.Context, slug string) (*PlaceDetail, error)
 	defer rows.Close()
 
 	d.Evidence = make([]Evidence, 0) // [] not null when a place somehow has none
+	platforms := map[string]bool{}  // for the trust diversity signal
+	var latest *time.Time           // newest source date across the evidence
 	for rows.Next() {
 		var ev Evidence
 		var upload *time.Time // DB `date` scans into time.Time; may be NULL
@@ -220,13 +291,25 @@ func (s *Store) GetPlace(ctx context.Context, slug string) (*PlaceDetail, error)
 		); err != nil {
 			return nil, err
 		}
+		if ev.Source.Platform != "" {
+			platforms[ev.Source.Platform] = true
+		}
 		if upload != nil {
+			if latest == nil || upload.After(*latest) {
+				latest = upload
+			}
 			day := upload.Format("2006-01-02")
 			ev.Source.UploadDate = &day
 		}
 		d.Evidence = append(d.Evidence, ev)
 	}
-	return &d, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// One evidence row per distinct source (unique(entity_id, source_id)), so the
+	// evidence count IS the distinct-source count — same basis as the list endpoint.
+	d.Trust = computeTrust(len(d.Evidence), len(platforms), latest)
+	return &d, nil
 }
 
 // --- Cities (destinations) -------------------------------------------------

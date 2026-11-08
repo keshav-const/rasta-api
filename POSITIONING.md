@@ -49,14 +49,16 @@ below, which only *this* dataset makes possible.
 
 ## The uniqueness trio (build one by one, in this order)
 
-### A — Provenance as a first-class feature  *(the HEADLINE — mandatory)*
+### A — Provenance as a first-class feature  *(the HEADLINE — ✅ SHIPPED)*
 Make "trust" a product, not a side effect. Expose a **corroboration / trust score**
-per entity: how many *independent* sources back it, how recent, how much they agree.
-- `GET /v1/places/{slug}` already returns inline evidence ("receipts"). ✅ foundation
-- Add a computed **trust/corroboration score** + `min_corroboration=` filter on
-  list endpoints: *"only places backed by ≥2 independent sources."*
-- Surface source diversity (platforms), recency, and agreement in the response.
+per entity: how many *independent* sources back it, across how many platforms, how recent.
+- `GET /v1/places/{slug}` returns inline evidence ("receipts"). ✅
+- Every place now carries a `trust` object `{sources, platforms, latest_source, score}`
+  (score = 0.55·breadth + 0.25·platform-diversity + 0.20·recency). ✅ see DECISIONS ADR-007
+- List endpoints gained `min_platforms=` (cross-platform corroboration) and `sort=trust`. ✅
 - **Pitch:** *the only travel API where you can filter by how well-sourced a fact is.*
+- **Still open:** stance/agreement signal (do sources agree?) and precomputed trust
+  columns if the on-read lateral gets hot.
 
 ### B — Geospatial + hybrid search  *(real DB depth, not `ILIKE`)*
 - `near=lat,lng&radius=` and `bbox=` queries over the geocoded places.

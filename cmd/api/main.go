@@ -77,14 +77,16 @@ func main() {
 			limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
 			offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
 			params := store.PlacesParams{
-				City:       q.Get("city"),
-				Country:    q.Get("country"),
-				Category:   q.Get("category"),
-				EntityType: q.Get("type"),
-				Q:          q.Get("q"),
-				MinSources: atoiOr(q.Get("min_sources"), 0),
-				Limit:      limit,
-				Offset:     offset,
+				City:         q.Get("city"),
+				Country:      q.Get("country"),
+				Category:     q.Get("category"),
+				EntityType:   q.Get("type"),
+				Q:            q.Get("q"),
+				MinSources:   atoiOr(q.Get("min_sources"), 0),
+				MinPlatforms: atoiOr(q.Get("min_platforms"), 0),
+				Sort:         q.Get("sort"),
+				Limit:        limit,
+				Offset:       offset,
 			}
 			places, err := db.ListPlaces(req.Context(), params)
 			if err != nil {
@@ -161,14 +163,16 @@ func main() {
 			limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
 			offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
 			places, err := db.ListPlaces(req.Context(), store.PlacesParams{
-				EntityType: typ,
-				City:       q.Get("city"),
-				Country:    q.Get("country"),
-				Category:   q.Get("category"),
-				Q:          q.Get("q"),
-				MinSources: atoiOr(q.Get("min_sources"), 0),
-				Limit:      limit,
-				Offset:     offset,
+				EntityType:   typ,
+				City:         q.Get("city"),
+				Country:      q.Get("country"),
+				Category:     q.Get("category"),
+				Q:            q.Get("q"),
+				MinSources:   atoiOr(q.Get("min_sources"), 0),
+				MinPlatforms: atoiOr(q.Get("min_platforms"), 0),
+				Sort:         q.Get("sort"),
+				Limit:        limit,
+				Offset:       offset,
 			})
 			if err != nil {
 				log.Printf("entities type=%q: %v", typ, err)

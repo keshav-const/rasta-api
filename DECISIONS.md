@@ -11,6 +11,28 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ## M1 — public read API (in progress)
 
+### ADR-007 · Trust/corroboration is a computed, first-class signal (Feature A — the headline)
+- **Decision:** every place carries a `trust` object — `{sources, platforms, latest_source,
+  score}` — where `score` (0..1) weights **breadth** (distinct sources, 0.55),
+  **diversity** (distinct *platforms*, 0.25), and **recency** (0.20). List endpoints
+  gain `min_platforms=` (cross-platform corroboration) and `sort=trust`.
+- **Alternatives:** (a) just expose the raw source count (already there as `sources`);
+  (b) precompute a trust column in the pipeline/DB; (c) fold trust into the existing
+  `recommendation_score`.
+- **Why:** provenance *is* the product's differentiator, so "how well-sourced is this?"
+  deserves to be a filterable, sortable, visible number — distinct from `score` ("how
+  good is the place"). Raw count alone misses that 3 *different platforms* corroborating
+  is far stronger than 3 of the same; the diversity term captures that. We compute it
+  **on read** via a lateral over the evidence (not a stored column) so M1 needs no
+  migration and the number is always in sync with the evidence; the weights live in
+  one Go function (`computeTrust`) so they're testable and tunable in one place.
+- **Caveat:** `sort=trust` orders by platforms-then-sources in SQL (can't ORDER BY a
+  Go-computed value); the `score` additionally decays by recency, so an old many-source
+  entity can sort above a newer one with a higher score. Acceptable for v1.
+- **Revisit when:** the lateral gets hot at scale → precompute `trust_*` columns during
+  scoring and ORDER BY the stored score (then sort and score agree exactly).
+
+
 ### ADR-006 · `/v1/places/{slug}` returns the place *with* its evidence inline
 - **Decision:** one request to `/v1/places/{slug}` returns the place object plus an
   `evidence[]` array — each entry is a source (platform, title, url, creator, date),
