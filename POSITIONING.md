@@ -54,11 +54,13 @@ Make "trust" a product, not a side effect. Expose a **corroboration / trust scor
 per entity: how many *independent* sources back it, across how many platforms, how recent.
 - `GET /v1/places/{slug}` returns inline evidence ("receipts"). ✅
 - Every place now carries a `trust` object `{sources, platforms, latest_source, score}`
-  (score = 0.55·breadth + 0.25·platform-diversity + 0.20·recency). ✅ see DECISIONS ADR-007
+  (score = 0.70·breadth + 0.30·platform-diversity). ✅ see DECISIONS ADR-007
+- Recency intentionally excluded — it measured *our* scrape cadence, not entity
+  trustworthiness (would punish timeless cultural entities). `latest_source` is info-only.
 - List endpoints gained `min_platforms=` (cross-platform corroboration) and `sort=trust`. ✅
 - **Pitch:** *the only travel API where you can filter by how well-sourced a fact is.*
-- **Still open:** stance/agreement signal (do sources agree?) and precomputed trust
-  columns if the on-read lateral gets hot.
+- **Still open:** stance/agreement signal (do sources agree?); a separate type-aware
+  *freshness* signal for volatile places; precomputed trust columns if the lateral gets hot.
 
 ### B — Geospatial + hybrid search  *(real DB depth, not `ILIKE`)*
 - `near=lat,lng&radius=` and `bbox=` queries over the geocoded places.

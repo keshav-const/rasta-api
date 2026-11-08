@@ -13,9 +13,16 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ### ADR-007 · Trust/corroboration is a computed, first-class signal (Feature A — the headline)
 - **Decision:** every place carries a `trust` object — `{sources, platforms, latest_source,
-  score}` — where `score` (0..1) weights **breadth** (distinct sources, 0.55),
-  **diversity** (distinct *platforms*, 0.25), and **recency** (0.20). List endpoints
-  gain `min_platforms=` (cross-platform corroboration) and `sort=trust`.
+  score}` — where `score` (0..1) weights **breadth** (distinct sources, 0.70) and
+  **diversity** (distinct *platforms*, 0.30). List endpoints gain `min_platforms=`
+  (cross-platform corroboration) and `sort=trust`.
+- **Recency is deliberately NOT in the score** (revised): source-age measures when *we*
+  last ingested, not whether the entity is current. A centuries-old art form (Kathakali)
+  isn't less trustworthy because our newest source is from 2021 — penalizing that would
+  punish enduring/cultural entities for our ingestion gaps and force a perpetual
+  re-scraping treadmill. `latest_source` is still exposed as plain info (doesn't move the
+  score). A separate, type-aware *freshness* signal for volatile places (restaurants that
+  may have closed) can come later.
 - **Alternatives:** (a) just expose the raw source count (already there as `sources`);
   (b) precompute a trust column in the pipeline/DB; (c) fold trust into the existing
   `recommendation_score`.

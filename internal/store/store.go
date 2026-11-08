@@ -57,24 +57,29 @@ type Trust struct {
 }
 
 // computeTrust turns the raw provenance counts into a 0..1 corroboration score.
-// It deliberately rewards INDEPENDENT corroboration over a single loud source:
-//   - breadth   (0.55): more distinct sources — saturates at 4
-//   - diversity (0.25): more distinct PLATFORMS — a YouTube+Wikipedia+blog claim
+// It rewards INDEPENDENT corroboration over a single loud source:
+//   - breadth   (0.70): more distinct sources — saturates at 4
+//   - diversity (0.30): more distinct PLATFORMS — a YouTube+Wikipedia+blog claim
 //                       is far more trustworthy than three of the same kind
-//   - recency   (0.20): newer sources; full within ~1y, decaying to 0 over ~5y more
+//
+// Recency is deliberately NOT a factor. "Trust" here means how well-corroborated a
+// fact is, which is time-independent: a centuries-old art form backed by 3 sources
+// is no less corroborated because our newest ingested source is a few years old.
+// Letting source-age drag the score would penalize enduring/cultural entities for
+// our own ingestion gaps and force a perpetual re-scraping treadmill. We still
+// expose `latest_source` as plain information for callers who want freshness — it
+// just doesn't move the score. (A separate, type-aware "freshness" signal for
+// volatile places — restaurants that may have closed — can come later.)
 // The weights live here (not in the DB) so they're one testable place to tune.
 func computeTrust(sources, platforms int, latest *time.Time) Trust {
 	breadth := math.Min(float64(sources), 4) / 4
 	diversity := math.Min(float64(platforms-1), 2) / 2 // 1 platform -> 0, 3+ -> 1
-	recency := 0.0
 	var latestStr *string
 	if latest != nil {
-		ageDays := time.Since(*latest).Hours() / 24
-		recency = clamp01(1 - (ageDays-365)/1825) // >=1y old starts decaying; ~6y -> 0
 		s := latest.Format("2006-01-02")
 		latestStr = &s
 	}
-	score := 0.55*breadth + 0.25*diversity + 0.20*recency
+	score := 0.70*breadth + 0.30*diversity
 	return Trust{
 		Sources:      sources,
 		Platforms:    platforms,
@@ -82,8 +87,6 @@ func computeTrust(sources, platforms int, latest *time.Time) Trust {
 		Score:        math.Round(score*100) / 100,
 	}
 }
-
-func clamp01(x float64) float64 { return math.Max(0, math.Min(1, x)) }
 
 // Place is one graph entity as the API exposes it. Pointer fields (*string,
 // *float64) are nullable: a cultural entity has no category, and an un-geocoded
