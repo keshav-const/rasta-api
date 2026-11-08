@@ -312,3 +312,37 @@ func (s *Store) ListCities(ctx context.Context, p CitiesParams) ([]City, error) 
 	}
 	return cities, rows.Err()
 }
+
+// --- Entity taxonomy -------------------------------------------------------
+
+// EntityTypeCount is one entity_type and how many active entities have it —
+// the taxonomy that powers "browse by category" (poi, festival, sport, ...).
+type EntityTypeCount struct {
+	Type  string `json:"type"`
+	Count int    `json:"count"`
+}
+
+// ListEntityTypes returns every entity_type present in the active graph with its
+// count, most common first — a single-table GROUP BY, no filters.
+func (s *Store) ListEntityTypes(ctx context.Context) ([]EntityTypeCount, error) {
+	rows, err := s.pool.Query(ctx, `
+		select entity_type, count(*) as n
+		from points_of_interest
+		where is_active
+		group by entity_type
+		order by n desc`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := make([]EntityTypeCount, 0)
+	for rows.Next() {
+		var e EntityTypeCount
+		if err := rows.Scan(&e.Type, &e.Count); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

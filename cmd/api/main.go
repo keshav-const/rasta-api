@@ -139,6 +139,45 @@ func main() {
 			meta := map[string]any{"count": len(cities), "limit": limit, "offset": offset}
 			httpx.JSON(w, http.StatusOK, cities, meta)
 		})
+
+		// GET /v1/entities            -> the taxonomy: entity types + counts (discovery)
+		// GET /v1/entities?type=sport -> entities of that type (same filters/paging as
+		//                                /v1/places). One route, two representations:
+		//                                the collection of categories, or a filtered list.
+		r.Get("/entities", func(w http.ResponseWriter, req *http.Request) {
+			q := req.URL.Query()
+			typ := q.Get("type")
+			if typ == "" {
+				types, err := db.ListEntityTypes(req.Context())
+				if err != nil {
+					log.Printf("entity types: %v", err)
+					httpx.Error(w, http.StatusInternalServerError, "internal", "could not load entity types")
+					return
+				}
+				httpx.JSON(w, http.StatusOK, types, map[string]any{"count": len(types)})
+				return
+			}
+			// ?type=... -> reuse the places query, pinned to this entity_type.
+			limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
+			offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
+			places, err := db.ListPlaces(req.Context(), store.PlacesParams{
+				EntityType: typ,
+				City:       q.Get("city"),
+				Country:    q.Get("country"),
+				Category:   q.Get("category"),
+				Q:          q.Get("q"),
+				MinSources: atoiOr(q.Get("min_sources"), 0),
+				Limit:      limit,
+				Offset:     offset,
+			})
+			if err != nil {
+				log.Printf("entities type=%q: %v", typ, err)
+				httpx.Error(w, http.StatusInternalServerError, "internal", "could not load entities")
+				return
+			}
+			meta := map[string]any{"type": typ, "count": len(places), "limit": limit, "offset": offset}
+			httpx.JSON(w, http.StatusOK, places, meta)
+		})
 	})
 
 	srv := &http.Server{
