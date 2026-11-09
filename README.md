@@ -73,7 +73,12 @@ Filtered, ranked list of entities. Every item carries **trust** and (where appli
 | `near=lat,lng` + `radius_km` | **radius search** (haversine); adds `distance_km`, sorts nearest-first |
 | `bbox=minLng,minLat,maxLng,maxLat` | **map-viewport** filter |
 | `sort` | `trust` \| `freshness` \| (default) recommendation score |
-| `limit` (≤100), `offset` | pagination |
+| `limit` (≤100) | page size |
+| `cursor` | keyset cursor from a previous response's `meta.next_cursor` (default sort); preferred over `offset` |
+| `offset` | offset paging (used for sorted/geo/search modes) |
+
+On the default sort, responses include `meta.next_cursor` when more rows exist — pass it
+back as `?cursor=` to page forward (keyset pagination; stable and fast at any depth).
 
 **Example — the query no stock travel API offers:**
 ```
@@ -110,6 +115,19 @@ label}`. See DECISIONS ADR-008.
 They're **orthogonal**: a place can be high-trust **and** stale.
 
 ---
+
+## Deploy
+
+Containerized with a multi-stage build → distroless static image (nonroot, ~tiny):
+
+```bash
+docker build -t rasta-api .
+docker run -p 8080:8080 -e DATABASE_URL="<supabase session-pooler url>" rasta-api
+```
+
+The app binds `:$PORT` (default 8080), so Render / Railway / Fly inject `PORT` for you —
+set `DATABASE_URL` (and later `REDIS_URL`, `RAZORPAY_*`) in the platform's env. `.env` is
+gitignored and `.dockerignore`d, so secrets never enter the image.
 
 ## Docs
 

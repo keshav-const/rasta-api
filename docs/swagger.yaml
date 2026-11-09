@@ -129,6 +129,11 @@ paths:
         in: query
         name: offset
         type: integer
+      - description: keyset cursor from a previous response's next_cursor (default
+          ordering only)
+        in: query
+        name: cursor
+        type: string
       produces:
       - application/json
       responses:
@@ -205,6 +210,11 @@ paths:
         in: query
         name: offset
         type: integer
+      - description: keyset cursor from a previous response's next_cursor (default
+          ordering only)
+        in: query
+        name: cursor
+        type: string
       produces:
       - application/json
       responses:

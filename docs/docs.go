@@ -175,6 +175,12 @@ const docTemplate = `{
                         "description": "page offset",
                         "name": "offset",
                         "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "keyset cursor from a previous response's next_cursor (default ordering only)",
+                        "name": "cursor",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -286,6 +292,12 @@ const docTemplate = `{
                         "type": "integer",
                         "description": "page offset",
                         "name": "offset",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "keyset cursor from a previous response's next_cursor (default ordering only)",
+                        "name": "cursor",
                         "in": "query"
                     }
                 ],

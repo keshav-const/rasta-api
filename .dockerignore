@@ -1,0 +1,9 @@
+# Keep the build context small and never bake secrets or local junk into the image.
+.git
+.gitignore
+.env
+.env.*
+*.log
+bin/
+tmp/
+*.md

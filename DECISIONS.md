@@ -11,6 +11,35 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ## M1 — public read API (in progress)
 
+### ADR-012 · Container: multi-stage build → distroless static, nonroot
+- **Decision:** a two-stage Dockerfile — build a fully static binary (`CGO_ENABLED=0`,
+  `-trimpath -ldflags="-s -w"`) on `golang:1.27-alpine`, then run it on
+  `gcr.io/distroless/static-debian12:nonroot`. `.dockerignore` excludes `.env`, `.git`,
+  logs. The app binds `:$PORT` (default 8080), so Render/most PaaS inject `PORT`.
+- **Why:** pgx is pure Go, so no libc is needed — distroless static is ~2 MB, has no shell
+  or package manager (tiny attack surface), ships CA certs (for the TLS to Supabase), and
+  runs as nonroot. Deps are cached in their own layer. Keeping `.env` out of the image is
+  the one thing that must not be missed.
+- **Revisit when:** we add CGO deps (then switch base), or need a healthcheck/OTel sidecar.
+
+### ADR-011 · Keyset (cursor) pagination for the default ordering
+- **Decision:** `/v1/places` (and `/v1/entities?type=`) return `meta.next_cursor`; passing
+  it as `?cursor=` fetches the next page. The cursor is an opaque base64 of the last row's
+  `(score, id)`; the next page is `where (coalesce(score,0), poi.id) < (cursorScore,
+  cursorId)`. `offset` is still accepted (and used for the non-default sorts).
+- **Why:** offset pagination re-scans and skips N rows (slow at depth) and can skip or
+  duplicate rows when the data changes between pages. Keyset seeks directly to the cursor
+  position — stable and fast regardless of depth. The default ordering already ends in a
+  unique tiebreaker (`poi.id`), which is exactly what keyset needs.
+- **Scope/caveat:** keyset needs a stable single ordering, so it's offered **only for the
+  default sort**. `sort=trust|freshness`, `near=` (distance) and `q=` (similarity) keep
+  `offset` and emit no cursor — their multi-key / computed orderings have no clean keyset,
+  and they're "first page matters most" explore modes anyway. To make the tuple comparison
+  valid the tiebreaker is `poi.id DESC` (both keys descending).
+- **Revisit when:** we want cursors for the other sorts (encode the full ordering tuple), or
+  bidirectional (prev) paging.
+
+
 ### ADR-010 · OpenAPI via swaggo, Swagger UI self-hosted; handlers as methods
 - **Decision:** generate the OpenAPI spec from `// @...` annotations with `swag`, serve
   **Swagger UI from our own binary** at `/swagger/`, and **commit** the generated `docs/`.

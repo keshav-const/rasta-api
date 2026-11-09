@@ -8,10 +8,12 @@ package store
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,7 +62,7 @@ type Trust struct {
 // It rewards INDEPENDENT corroboration over a single loud source:
 //   - breadth   (0.70): more distinct sources — saturates at 4
 //   - diversity (0.30): more distinct PLATFORMS — a YouTube+Wikipedia+blog claim
-//                       is far more trustworthy than three of the same kind
+//     is far more trustworthy than three of the same kind
 //
 // Recency is deliberately NOT a factor. "Trust" here means how well-corroborated a
 // fact is, which is time-independent: a centuries-old art form backed by 3 sources
@@ -97,8 +99,8 @@ func clamp01(x float64) float64 { return math.Max(0, math.Min(1, x)) }
 type Freshness struct {
 	LatestSource *string `json:"latest_source"`
 	AgeDays      *int    `json:"age_days"`
-	Score        float64 `json:"score"`          // 0..1
-	Label        string  `json:"label"`          // fresh | aging | stale | unknown
+	Score        float64 `json:"score"` // 0..1
+	Label        string  `json:"label"` // fresh | aging | stale | unknown
 }
 
 // enduringTypes never go stale — freshness is N/A (nil) for them.
@@ -130,8 +132,9 @@ var volatileCategoriesList = []string{
 // Age (days) at which freshness crosses into "stale" (score 0.33), per band — the
 // inverse of computeFreshness's decay. fresh_only uses these so "not stale" means
 // the same thing whether you read the label or apply the filter.
-//   volatile:    180 + (1-0.33)*(900-180)  ≈ 662
-//   semi-stable: 730 + (1-0.33)*(3650-730) ≈ 2686
+//
+//	volatile:    180 + (1-0.33)*(900-180)  ≈ 662
+//	semi-stable: 730 + (1-0.33)*(3650-730) ≈ 2686
 const (
 	volatileStaleDays   = 662
 	semiStableStaleDays = 2686
@@ -169,14 +172,14 @@ func computeFreshness(entityType string, category *string, latest *time.Time) *F
 // *float64) are nullable: a cultural entity has no category, and an un-geocoded
 // place has no lat/lng — those come back as JSON null instead of 0/"".
 type Place struct {
-	Slug       string   `json:"slug"`
-	Name       string   `json:"name"`
-	EntityType string   `json:"entity_type"`
-	Category   *string  `json:"category"`
-	City       string   `json:"city"`
-	Country    string   `json:"country"`
-	Lat        *float64 `json:"lat"`
-	Lng        *float64 `json:"lng"`
+	Slug       string     `json:"slug"`
+	Name       string     `json:"name"`
+	EntityType string     `json:"entity_type"`
+	Category   *string    `json:"category"`
+	City       string     `json:"city"`
+	Country    string     `json:"country"`
+	Lat        *float64   `json:"lat"`
+	Lng        *float64   `json:"lng"`
 	Sources    int        `json:"sources"`
 	Score      float64    `json:"score"`
 	Trust      Trust      `json:"trust"`
@@ -204,15 +207,43 @@ type PlacesParams struct {
 	HasBBox  bool       // map-viewport filter
 	BBox     [4]float64 // minLng, minLat, maxLng, maxLat
 	Sort     string     // "" (recommendation score) | "trust" | "freshness"
+	Cursor   string     // opaque keyset cursor (default ordering only); supersedes Offset
 	Limit    int
 	Offset   int
+}
+
+// Cursor pagination encodes the last row's (score, id) as an opaque token. The
+// next page is everything ordered strictly after it — keyset pagination, which
+// avoids offset's scan-and-skip cost and its skip/duplicate anomalies when rows
+// change between pages. Only valid for the default ordering (score desc, id desc).
+func encodeCursor(score float64, id string) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf("%g|%s", score, id)))
+}
+
+func decodeCursor(tok string) (score float64, id string, ok bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(tok)
+	if err != nil {
+		return 0, "", false
+	}
+	parts := strings.SplitN(string(raw), "|", 2)
+	if len(parts) != 2 {
+		return 0, "", false
+	}
+	score, err = strconv.ParseFloat(parts[0], 64)
+	if err != nil {
+		return 0, "", false
+	}
+	return score, parts[1], true
 }
 
 // ListPlaces returns active entities matching the filters, highest-scored first.
 // The SQL is built dynamically but ALWAYS parameterized ($1, $2, …) — values go
 // through pgx as parameters, never string-concatenated, so SQL injection is
 // impossible by construction.
-func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error) {
+func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, string, error) {
+	// Keyset cursor pagination applies only to the default ordering (there's no
+	// stable single key to page a trust/freshness/distance/similarity sort on).
+	defaultOrder := p.Sort == "" && !p.HasNear && p.Q == ""
 	where := []string{"poi.is_active"}
 	var args []any
 	// add appends one arg and records a condition that references it by position.
@@ -297,29 +328,49 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 			n-3, n-1, n-2, n))
 	}
 
-	// Sort precedence: nearest first (geo), else trust/freshness, else best name
-	// match (when searching), else recommendation score.
-	orderBy := "poi.recommendation_score desc nulls last, poi.id"
-	switch {
-	case p.HasNear:
-		orderBy = "distance_km asc nulls last, poi.id"
-	case p.Sort == "trust":
-		orderBy = "ev.plats desc nulls last, ev.src desc nulls last, " +
-			"poi.recommendation_score desc nulls last, poi.id"
-	case p.Sort == "freshness":
-		orderBy = "ev.latest desc nulls last, poi.recommendation_score desc nulls last, poi.id"
-	case qPos > 0:
-		orderBy = fmt.Sprintf(
-			"similarity(poi.name, $%d) desc, poi.recommendation_score desc nulls last, poi.id", qPos)
+	// Keyset pagination: the cursor holds the last row's (score, id); the next page
+	// is everything strictly after it in the default ordering. Tuple comparison needs
+	// both keys descending, which is why the tiebreaker below is `poi.id desc`.
+	useCursor := false
+	if defaultOrder && p.Cursor != "" {
+		if cs, cid, ok := decodeCursor(p.Cursor); ok {
+			args = append(args, cs, cid)
+			where = append(where, fmt.Sprintf(
+				"(coalesce(poi.recommendation_score,0), poi.id) < ($%d, $%d::uuid)",
+				len(args)-1, len(args)))
+			useCursor = true
+		}
 	}
 
-	args = append(args, p.Limit, p.Offset)
+	// Sort precedence: nearest first (geo), else trust/freshness, else best name
+	// match (when searching), else recommendation score. Tiebreaker is id desc so the
+	// default ordering is keyset-compatible.
+	orderBy := "coalesce(poi.recommendation_score,0) desc, poi.id desc"
+	switch {
+	case p.HasNear:
+		orderBy = "distance_km asc nulls last, poi.id desc"
+	case p.Sort == "trust":
+		orderBy = "ev.plats desc nulls last, ev.src desc nulls last, " +
+			"coalesce(poi.recommendation_score,0) desc, poi.id desc"
+	case p.Sort == "freshness":
+		orderBy = "ev.latest desc nulls last, coalesce(poi.recommendation_score,0) desc, poi.id desc"
+	case qPos > 0:
+		orderBy = fmt.Sprintf(
+			"similarity(poi.name, $%d) desc, coalesce(poi.recommendation_score,0) desc, poi.id desc", qPos)
+	}
+
+	// With a cursor the WHERE already excludes seen rows, so offset is 0.
+	offset := p.Offset
+	if useCursor {
+		offset = 0
+	}
+	args = append(args, p.Limit, offset)
 	// The lateral computes per-entity provenance (distinct sources, distinct
 	// platforms, newest source date) from the evidence. idx_evidence_entity makes
 	// each one an index lookup; the graph is small, so this is ms-scale. If it ever
 	// gets hot, precompute these into columns during scoring (see DECISIONS ADR-007).
 	query := fmt.Sprintf(`
-		select poi.slug, poi.name, poi.entity_type, poi.poi_category,
+		select poi.id::text, poi.slug, poi.name, poi.entity_type, poi.poi_category,
 		       d.slug, d.country, poi.lat, poi.lng,
 		       coalesce(ev.src, 0), coalesce(ev.plats, 0), ev.latest,
 		       coalesce(poi.recommendation_score, 0), %s as distance_km
@@ -340,22 +391,25 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	defer rows.Close() // guaranteed to run when the function returns
 
 	places := make([]Place, 0) // non-nil empty slice -> serializes as [] not null
+	var lastScore float64
+	var lastID string
 	for rows.Next() {
 		var pl Place
+		var rowID string
 		var plats int
 		var latest *time.Time
 		var distKm *float64
 		if err := rows.Scan(
-			&pl.Slug, &pl.Name, &pl.EntityType, &pl.Category,
+			&rowID, &pl.Slug, &pl.Name, &pl.EntityType, &pl.Category,
 			&pl.City, &pl.Country, &pl.Lat, &pl.Lng,
 			&pl.Sources, &plats, &latest, &pl.Score, &distKm,
 		); err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		if distKm != nil {
 			r := math.Round(*distKm*100) / 100
@@ -364,8 +418,18 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 		pl.Trust = computeTrust(pl.Sources, plats, latest)
 		pl.Freshness = computeFreshness(pl.EntityType, pl.Category, latest)
 		places = append(places, pl)
+		lastScore, lastID = pl.Score, rowID
 	}
-	return places, rows.Err() // surface any error that ended the iteration
+	if err := rows.Err(); err != nil {
+		return nil, "", err
+	}
+	// Emit a next cursor only for the default ordering and only when the page is
+	// full (a short page means there's nothing after it).
+	next := ""
+	if defaultOrder && p.Limit > 0 && len(places) == p.Limit {
+		next = encodeCursor(lastScore, lastID)
+	}
+	return places, next, nil
 }
 
 // --- Place detail + evidence (the "receipts" endpoint) ---------------------
@@ -374,10 +438,10 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 // framed the place (stance), and the structured claims it made. This is Rasta's
 // moat — every place is backed by citable evidence, not anonymous star ratings.
 type Evidence struct {
-	Source     EvidenceSource  `json:"source"`
-	Stance     string          `json:"stance"` // recommended | mentioned | warned_against | mixed
-	Strength   *float64        `json:"strength"`
-	Confidence *float64        `json:"confidence"`
+	Source     EvidenceSource `json:"source"`
+	Stance     string         `json:"stance"` // recommended | mentioned | warned_against | mixed
+	Strength   *float64       `json:"strength"`
+	Confidence *float64       `json:"confidence"`
 	// Claims is passed through verbatim from the DB (jsonb): each is roughly
 	// {field, value, evidence, timestamp_seconds, confidence}. We keep it as raw
 	// JSON so the API never silently drops a claim field the extractor added.
@@ -441,8 +505,8 @@ func (s *Store) GetPlace(ctx context.Context, slug string) (*PlaceDetail, error)
 	defer rows.Close()
 
 	d.Evidence = make([]Evidence, 0) // [] not null when a place somehow has none
-	platforms := map[string]bool{}  // for the trust diversity signal
-	var latest *time.Time           // newest source date across the evidence
+	platforms := map[string]bool{}   // for the trust diversity signal
+	var latest *time.Time            // newest source date across the evidence
 	for rows.Next() {
 		var ev Evidence
 		var upload *time.Time // DB `date` scans into time.Time; may be NULL

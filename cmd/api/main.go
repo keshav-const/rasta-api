@@ -161,6 +161,7 @@ func (a *api) stats(w http.ResponseWriter, req *http.Request) {
 // @Param        sort          query string  false "trust | freshness (default: recommendation score)"
 // @Param        limit         query int     false "page size (<=100, default 20)"
 // @Param        offset        query int     false "page offset"
+// @Param        cursor        query string  false "keyset cursor from a previous response's next_cursor (default ordering only)"
 // @Success      200 {object} httpx.Envelope
 // @Router       /v1/places [get]
 func (a *api) listPlaces(w http.ResponseWriter, req *http.Request) {
@@ -178,17 +179,21 @@ func (a *api) listPlaces(w http.ResponseWriter, req *http.Request) {
 		MaxSourceAge: maxSourceAge(q),
 		FreshOnly:    q.Get("fresh_only") == "true",
 		Sort:         q.Get("sort"),
+		Cursor:       q.Get("cursor"),
 		Limit:        limit,
 		Offset:       offset,
 	}
 	applyGeo(q, &params) // near=/radius_km=/bbox=
-	places, err := a.db.ListPlaces(req.Context(), params)
+	places, next, err := a.db.ListPlaces(req.Context(), params)
 	if err != nil {
 		log.Printf("places: %v", err)
 		httpx.Error(w, http.StatusInternalServerError, "internal", "could not load places")
 		return
 	}
 	meta := map[string]any{"count": len(places), "limit": limit, "offset": offset}
+	if next != "" {
+		meta["next_cursor"] = next
+	}
 	httpx.JSON(w, http.StatusOK, places, meta)
 }
 
@@ -268,6 +273,7 @@ func (a *api) listCities(w http.ResponseWriter, req *http.Request) {
 // @Param        sort          query string  false "trust | freshness"
 // @Param        limit         query int     false "page size (<=100)"
 // @Param        offset        query int     false "page offset"
+// @Param        cursor        query string  false "keyset cursor from a previous response's next_cursor (default ordering only)"
 // @Success      200 {object} httpx.Envelope
 // @Router       /v1/entities [get]
 func (a *api) listEntities(w http.ResponseWriter, req *http.Request) {
@@ -297,17 +303,21 @@ func (a *api) listEntities(w http.ResponseWriter, req *http.Request) {
 		MaxSourceAge: maxSourceAge(q),
 		FreshOnly:    q.Get("fresh_only") == "true",
 		Sort:         q.Get("sort"),
+		Cursor:       q.Get("cursor"),
 		Limit:        limit,
 		Offset:       offset,
 	}
 	applyGeo(q, &eparams)
-	places, err := a.db.ListPlaces(req.Context(), eparams)
+	places, next, err := a.db.ListPlaces(req.Context(), eparams)
 	if err != nil {
 		log.Printf("entities type=%q: %v", typ, err)
 		httpx.Error(w, http.StatusInternalServerError, "internal", "could not load entities")
 		return
 	}
 	meta := map[string]any{"type": typ, "count": len(places), "limit": limit, "offset": offset}
+	if next != "" {
+		meta["next_cursor"] = next
+	}
 	httpx.JSON(w, http.StatusOK, places, meta)
 }
 
