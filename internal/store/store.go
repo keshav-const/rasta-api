@@ -180,7 +180,8 @@ type Place struct {
 	Sources    int        `json:"sources"`
 	Score      float64    `json:"score"`
 	Trust      Trust      `json:"trust"`
-	Freshness  *Freshness `json:"freshness"` // null for enduring entities
+	Freshness  *Freshness `json:"freshness"`             // null for enduring entities
+	DistanceKm *float64   `json:"distance_km,omitempty"` // set only for near= queries
 }
 
 // PlacesParams are the supported filters + paging for ListPlaces. Zero values
@@ -196,9 +197,15 @@ type PlacesParams struct {
 	MaxSourceAge int    // days: drop places whose newest source is older (explicit)
 	FreshOnly    bool   // drop entities whose freshness label would be "stale" (band-aware)
 	//                     Both skip enduring entities — they can't go stale.
-	Sort   string // "" (recommendation score) | "trust" | "freshness"
-	Limit  int
-	Offset int
+	HasNear  bool    // radius search around a point (haversine)
+	NearLat  float64 // used when HasNear
+	NearLng  float64
+	RadiusKm float64    // optional; 0 = no radius cap, just sort by distance
+	HasBBox  bool       // map-viewport filter
+	BBox     [4]float64 // minLng, minLat, maxLng, maxLat
+	Sort     string     // "" (recommendation score) | "trust" | "freshness"
+	Limit    int
+	Offset   int
 }
 
 // ListPlaces returns active entities matching the filters, highest-scored first.
@@ -231,8 +238,14 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 	if p.MinPlatforms > 0 {
 		add("ev.plats >= $%d", p.MinPlatforms) // references the lateral below
 	}
+	qPos := 0
 	if p.Q != "" {
-		add("poi.name ILIKE '%%' || $%d || '%%'", p.Q) // %% is a literal % after fmt
+		args = append(args, p.Q)
+		qPos = len(args)
+		// Hybrid: substring match OR trigram-similar (typo-tolerant). After fmt, '%%'
+		// is a literal % and '%% $' is the pg_trgm similarity operator.
+		where = append(where, fmt.Sprintf(
+			"(poi.name ILIKE '%%' || $%d || '%%' OR poi.name %% $%d)", qPos, qPos))
 	}
 	if p.MaxSourceAge > 0 {
 		// Enduring types always pass (they can't go stale); everything else passes
@@ -254,14 +267,50 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 			e, v, volatileStaleDays, v, semiStableStaleDays))
 	}
 
-	// Sort: best-corroborated, freshest, or (default) recommendation score.
+	// Geo: radius search around a point (haversine, km) and/or a bbox (map viewport).
+	distSelect := "null::float8"
+	distExpr := ""
+	if p.HasNear {
+		args = append(args, p.NearLat)
+		latPos := len(args)
+		args = append(args, p.NearLng)
+		lngPos := len(args)
+		// Haversine in km. least/greatest guard acos's domain against FP rounding.
+		distExpr = fmt.Sprintf(
+			"6371 * acos(least(1, greatest(-1, "+
+				"cos(radians($%d))*cos(radians(poi.lat))*cos(radians(poi.lng)-radians($%d)) "+
+				"+ sin(radians($%d))*sin(radians(poi.lat)))))",
+			latPos, lngPos, latPos)
+		distSelect = distExpr
+		where = append(where, "poi.lat is not null")
+		if p.RadiusKm > 0 {
+			args = append(args, p.RadiusKm)
+			where = append(where, fmt.Sprintf("%s <= $%d", distExpr, len(args)))
+		}
+	}
+	if p.HasBBox {
+		// BBox = [minLng, minLat, maxLng, maxLat]
+		args = append(args, p.BBox[0], p.BBox[1], p.BBox[2], p.BBox[3])
+		n := len(args)
+		where = append(where, fmt.Sprintf(
+			"poi.lng between $%d and $%d and poi.lat between $%d and $%d",
+			n-3, n-1, n-2, n))
+	}
+
+	// Sort precedence: nearest first (geo), else trust/freshness, else best name
+	// match (when searching), else recommendation score.
 	orderBy := "poi.recommendation_score desc nulls last, poi.id"
-	switch p.Sort {
-	case "trust":
+	switch {
+	case p.HasNear:
+		orderBy = "distance_km asc nulls last, poi.id"
+	case p.Sort == "trust":
 		orderBy = "ev.plats desc nulls last, ev.src desc nulls last, " +
 			"poi.recommendation_score desc nulls last, poi.id"
-	case "freshness":
+	case p.Sort == "freshness":
 		orderBy = "ev.latest desc nulls last, poi.recommendation_score desc nulls last, poi.id"
+	case qPos > 0:
+		orderBy = fmt.Sprintf(
+			"similarity(poi.name, $%d) desc, poi.recommendation_score desc nulls last, poi.id", qPos)
 	}
 
 	args = append(args, p.Limit, p.Offset)
@@ -273,7 +322,7 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 		select poi.slug, poi.name, poi.entity_type, poi.poi_category,
 		       d.slug, d.country, poi.lat, poi.lng,
 		       coalesce(ev.src, 0), coalesce(ev.plats, 0), ev.latest,
-		       coalesce(poi.recommendation_score, 0)
+		       coalesce(poi.recommendation_score, 0), %s as distance_km
 		from points_of_interest poi
 		join destinations d on d.id = poi.destination_id
 		left join lateral (
@@ -287,7 +336,7 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 		where %s
 		order by %s
 		limit $%d offset $%d`,
-		strings.Join(where, " and "), orderBy, len(args)-1, len(args))
+		distSelect, strings.Join(where, " and "), orderBy, len(args)-1, len(args))
 
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
@@ -300,12 +349,17 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 		var pl Place
 		var plats int
 		var latest *time.Time
+		var distKm *float64
 		if err := rows.Scan(
 			&pl.Slug, &pl.Name, &pl.EntityType, &pl.Category,
 			&pl.City, &pl.Country, &pl.Lat, &pl.Lng,
-			&pl.Sources, &plats, &latest, &pl.Score,
+			&pl.Sources, &plats, &latest, &pl.Score, &distKm,
 		); err != nil {
 			return nil, err
+		}
+		if distKm != nil {
+			r := math.Round(*distKm*100) / 100
+			pl.DistanceKm = &r
 		}
 		pl.Trust = computeTrust(pl.Sources, plats, latest)
 		pl.Freshness = computeFreshness(pl.EntityType, pl.Category, latest)

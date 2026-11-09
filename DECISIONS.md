@@ -11,6 +11,29 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ## M1 — public read API (in progress)
 
+### ADR-009 · Geo (radius + bbox) and fuzzy trigram search (Feature B)
+- **Decision:** `/v1/places` gains `near=lat,lng` (+ optional `radius_km`) radius search
+  with a computed `distance_km` and nearest-first sort; `bbox=minLng,minLat,maxLng,maxLat`
+  map-viewport filter; and `q=` upgraded from `ILIKE` substring to **pg_trgm** fuzzy
+  (typo-tolerant) + ranked by `similarity()`.
+- **Why:** turns a filterable catalog into a location service (near-me) and a map backend
+  (viewport), and makes search feel like search (ranked, typo-tolerant). Combined with
+  trust/freshness it expresses queries stock travel APIs can't ("best-sourced, fresh
+  restaurants within 2 km, nearest first"), and it shows real Postgres depth.
+- **Alternatives:** PostGIS (overkill — the schema is plain lat/lng floats; haversine in
+  SQL is exact and dependency-free at this scale); a search engine (Elasticsearch/Meili)
+  for `q=` (overkill for name search — pg_trgm + a GIN index is fast and keeps one store).
+- **Implementation:** haversine computed in SQL (least/greatest guard acos's domain);
+  `distance_km` selected as an expression (NULL unless `near`); trigram via
+  `create extension pg_trgm` + a GIN index on `name` (migration `20261109120000_*` in the
+  pipeline repo). `q` is hybrid: `ILIKE OR name % q`, ordered by `similarity` when searching.
+- **Caveat:** radius/bbox only cover geocoded entities; results are only as good as the
+  coordinates — a few mis-geocoded POIs surface in the wrong place, so a geocoding-accuracy
+  pass (validate a POI's coords against its destination's region) is a worthwhile follow-up.
+- **Revisit when:** geocoding accuracy is cleaned up; or scale warrants PostGIS (KNN
+  `<->` index) or a dedicated search service.
+
+
 ### ADR-008 · Freshness is a SEPARATE, type-gated axis (not part of trust)
 - **Decision:** add a `freshness` object `{latest_source, age_days, score, label}`,
   distinct from `trust`. It's `null` for **enduring** types (art_form, performing_art,

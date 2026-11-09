@@ -67,11 +67,15 @@ per entity: how many *independent* sources back it, across how many platforms, h
 - **Still open:** stance/agreement signal (do sources agree?); source-type half-life;
   precomputed trust/freshness columns if the on-read lateral gets hot.
 
-### B — Geospatial + hybrid search  *(real DB depth, not `ILIKE`)*
-- `near=lat,lng&radius=` and `bbox=` queries over the geocoded places.
-- **Full-text / trigram** ranked search (`pg_trgm` / `tsvector`) replacing `ILIKE`.
-- **Demo:** *"street food near me that creators actually recommend, with receipts"* —
-  killer on a map. Shows Postgres beyond CRUD: indexes, ranking, geospatial.
+### B — Geospatial + hybrid search  *(✅ SHIPPED — real DB depth, not `ILIKE`)*
+- `near=lat,lng` (+ `radius_km`) radius search with `distance_km` + nearest-first, and
+  `bbox=` map-viewport filter (haversine in SQL, no PostGIS needed). ✅
+- **Trigram** fuzzy + ranked search (`pg_trgm` + GIN index) replacing `ILIKE`. ✅ ADR-009
+- **Demo:** `near=28.61,77.21&radius_km=2&category=restaurant&fresh_only=true&sort=trust`
+  — best-corroborated, fresh restaurants within 2 km, nearest first. A query no stock
+  travel API offers.
+- **Follow-up:** geocoding-accuracy pass (a few POIs are mis-geocoded; validate coords
+  against the destination's region).
 
 ### C — AI-native access: MCP server + natural-language query  *(the 2026 wow)*
 - An **MCP server** exposing the graph as a tool for AI agents.

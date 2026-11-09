@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -91,6 +92,7 @@ func main() {
 				Limit:        limit,
 				Offset:       offset,
 			}
+			applyGeo(q, &params) // near=/radius_km=/bbox=
 			places, err := db.ListPlaces(req.Context(), params)
 			if err != nil {
 				log.Printf("places: %v", err)
@@ -165,7 +167,7 @@ func main() {
 			// ?type=... -> reuse the places query, pinned to this entity_type.
 			limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
 			offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
-			places, err := db.ListPlaces(req.Context(), store.PlacesParams{
+			eparams := store.PlacesParams{
 				EntityType:   typ,
 				City:         q.Get("city"),
 				Country:      q.Get("country"),
@@ -178,7 +180,9 @@ func main() {
 				Sort:         q.Get("sort"),
 				Limit:        limit,
 				Offset:       offset,
-			})
+			}
+			applyGeo(q, &eparams)
+			places, err := db.ListPlaces(req.Context(), eparams)
 			if err != nil {
 				log.Printf("entities type=%q: %v", typ, err)
 				httpx.Error(w, http.StatusInternalServerError, "internal", "could not load entities")
@@ -245,4 +249,41 @@ func maxInt(a, b int) int {
 // fresh_only is handled separately (band-aware) via PlacesParams.FreshOnly.
 func maxSourceAge(q url.Values) int {
 	return maxInt(atoiOr(q.Get("max_source_age_days"), 0), 0)
+}
+
+// applyGeo parses the geo query params onto p. near="lat,lng" (+ optional
+// radius_km) enables radius search; bbox="minLng,minLat,maxLng,maxLat" filters to
+// a map viewport. Malformed values are ignored (the filter just doesn't apply).
+func applyGeo(q url.Values, p *store.PlacesParams) {
+	if n := q.Get("near"); n != "" {
+		parts := strings.Split(n, ",")
+		if len(parts) == 2 {
+			lat, e1 := strconv.ParseFloat(strings.TrimSpace(parts[0]), 64)
+			lng, e2 := strconv.ParseFloat(strings.TrimSpace(parts[1]), 64)
+			if e1 == nil && e2 == nil {
+				p.HasNear, p.NearLat, p.NearLng = true, lat, lng
+				if r, err := strconv.ParseFloat(q.Get("radius_km"), 64); err == nil {
+					p.RadiusKm = r
+				}
+			}
+		}
+	}
+	if b := q.Get("bbox"); b != "" {
+		parts := strings.Split(b, ",")
+		if len(parts) == 4 {
+			var f [4]float64
+			ok := true
+			for i, s := range parts {
+				v, err := strconv.ParseFloat(strings.TrimSpace(s), 64)
+				if err != nil {
+					ok = false
+					break
+				}
+				f[i] = v
+			}
+			if ok {
+				p.HasBBox, p.BBox = true, f
+			}
+		}
+	}
 }
