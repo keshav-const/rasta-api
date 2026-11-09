@@ -11,6 +11,25 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ## M1 — public read API (in progress)
 
+### ADR-010 · OpenAPI via swaggo, Swagger UI self-hosted; handlers as methods
+- **Decision:** generate the OpenAPI spec from `// @...` annotations with `swag`, serve
+  **Swagger UI from our own binary** at `/swagger/`, and **commit** the generated `docs/`.
+  To make the annotations attachable, the inline route closures were refactored into
+  methods on a small `api` struct (`a.listPlaces`, …) registered on the router.
+- **Why:** free and fully self-hosted — no SaaS, no account, nothing phones home (the only
+  paid "Swagger" is SmartBear's SwaggerHub, which we don't use). Docs live next to the code
+  as annotations, so they drift less; the UI gives an interactive "try it out". swag emits
+  OpenAPI 2.0, the pragmatic Go default. Committing `docs/` means the deploy image needs no
+  `swag` CLI. The handler refactor is also just cleaner (shared deps on one struct) and sets
+  up a future handlers package.
+- **Alternatives:** hand-write the spec (drifts from code); OpenAPI 3 via `swaggest/rest`
+  (more moving parts than M1 needs); SwaggerHub (paid SaaS — rejected).
+- **Gotcha:** the `swag` CLI and the `swaggo/swag` library must be the same major version,
+  or the generated `docs.go` references Spec fields the library lacks — pin both (v1.16.x).
+- **Revisit when:** we want OpenAPI 3.x, or typed response schemas per endpoint (right now
+  success bodies are documented as the shared `httpx.Envelope`).
+
+
 ### ADR-009 · Geo (radius + bbox) and fuzzy trigram search (Feature B)
 - **Decision:** `/v1/places` gains `near=lat,lng` (+ optional `radius_km`) radius search
   with a computed `distance_km` and nearest-first sort; `bbox=minLng,minLat,maxLng,maxLat`

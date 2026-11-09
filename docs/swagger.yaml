@@ -1,0 +1,258 @@
+basePath: /
+definitions:
+  github_com_keshav-const_rasta-api_internal_httpx.APIError:
+    properties:
+      code:
+        type: string
+      message:
+        type: string
+    type: object
+  github_com_keshav-const_rasta-api_internal_httpx.Envelope:
+    properties:
+      data: {}
+      error:
+        $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.APIError'
+      meta: {}
+    type: object
+info:
+  contact: {}
+  description: 'A provenance-first cultural data API for India: 4,900+ creator-verified
+    places and living traditions where every claim cites its source. Each entity carries
+    a trust signal (how well-corroborated) and, where applicable, a freshness signal
+    (how current). Supports geo (near/bbox) and fuzzy search.'
+  title: Rasta API
+  version: "1.0"
+paths:
+  /healthz:
+    get:
+      description: Returns ok, and 503 if the database is unreachable.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope'
+      summary: Liveness & readiness
+      tags:
+      - system
+  /v1/cities:
+    get:
+      description: Cities/regions with a live count of the active entities anchored
+        to each, busiest first.
+      parameters:
+      - description: e.g. India
+        in: query
+        name: country
+        type: string
+      - description: city | region
+        in: query
+        name: type
+        type: string
+      - description: name search
+        in: query
+        name: q
+        type: string
+      - description: only destinations with >= N entities
+        in: query
+        name: min_places
+        type: integer
+      - description: page size (<=100)
+        in: query
+        name: limit
+        type: integer
+      - description: page offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope'
+      summary: Destinations with live entity counts
+      tags:
+      - cities
+  /v1/entities:
+    get:
+      description: 'Without type=: the taxonomy (each entity_type + count) for category
+        discovery. With type=<t>: entities of that type, using the same filters/paging
+        as /v1/places.'
+      parameters:
+      - description: entity_type to list; omit for the taxonomy
+        in: query
+        name: type
+        type: string
+      - description: fuzzy name search
+        in: query
+        name: q
+        type: string
+      - description: min distinct sources
+        in: query
+        name: min_sources
+        type: integer
+      - description: min distinct platforms
+        in: query
+        name: min_platforms
+        type: integer
+      - description: drop stale volatile places
+        in: query
+        name: fresh_only
+        type: boolean
+      - description: lat,lng for radius search
+        in: query
+        name: near
+        type: string
+      - description: radius (km) for near=
+        in: query
+        name: radius_km
+        type: number
+      - description: minLng,minLat,maxLng,maxLat
+        in: query
+        name: bbox
+        type: string
+      - description: trust | freshness
+        in: query
+        name: sort
+        type: string
+      - description: page size (<=100)
+        in: query
+        name: limit
+        type: integer
+      - description: page offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope'
+      summary: Entity taxonomy, or entities of a type
+      tags:
+      - entities
+  /v1/places:
+    get:
+      description: Ranked list of places and cultural entities. Each item carries
+        a trust object and, where applicable, a freshness object. Supports geo (near/bbox)
+        and fuzzy search.
+      parameters:
+      - description: destination slug (e.g. jaipur)
+        in: query
+        name: city
+        type: string
+      - description: e.g. India
+        in: query
+        name: country
+        type: string
+      - description: poi_category (e.g. temple, restaurant)
+        in: query
+        name: category
+        type: string
+      - description: entity_type (poi, festival, sport, cuisine, ...)
+        in: query
+        name: type
+        type: string
+      - description: fuzzy name search (typo-tolerant, ranked)
+        in: query
+        name: q
+        type: string
+      - description: only entities backed by >= N distinct sources
+        in: query
+        name: min_sources
+        type: integer
+      - description: only entities across >= N distinct platforms
+        in: query
+        name: min_platforms
+        type: integer
+      - description: drop entities whose newest source is older (enduring types exempt)
+        in: query
+        name: max_source_age_days
+        type: integer
+      - description: drop entities whose freshness would be stale (band-aware)
+        in: query
+        name: fresh_only
+        type: boolean
+      - description: lat,lng for radius search
+        in: query
+        name: near
+        type: string
+      - description: radius (km) for near=
+        in: query
+        name: radius_km
+        type: number
+      - description: minLng,minLat,maxLng,maxLat (map viewport)
+        in: query
+        name: bbox
+        type: string
+      - description: 'trust | freshness (default: recommendation score)'
+        in: query
+        name: sort
+        type: string
+      - description: page size (<=100, default 20)
+        in: query
+        name: limit
+        type: integer
+      - description: page offset
+        in: query
+        name: offset
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope'
+      summary: List & filter entities
+      tags:
+      - places
+  /v1/places/{slug}:
+    get:
+      description: 'The product''s moat: returns the entity plus every source backing
+        it (platform, title, url, creator, date), each with its stance and raw claims.'
+      parameters:
+      - description: entity slug
+        in: path
+        name: slug
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope'
+      summary: One place with all its sourced evidence ("receipts")
+      tags:
+      - places
+  /v1/stats:
+    get:
+      description: Totals for places, cities, sources and claims.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope'
+      summary: Headline graph counts
+      tags:
+      - system
+schemes:
+- http
+- https
+swagger: "2.0"

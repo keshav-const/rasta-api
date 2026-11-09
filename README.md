@@ -26,6 +26,16 @@ Supabase Postgres (session pooler) · `pg_trgm` for fuzzy search. Hand-written S
 cp .env.example .env     # set DATABASE_URL (Supabase IPv4 session-pooler URL)
 go run ./cmd/api         # listens on :$PORT (default 8080)
 curl localhost:8080/healthz
+open  localhost:8080/swagger/   # interactive API docs (Swagger UI)
+```
+
+**Interactive docs:** Swagger UI is served by the binary itself at **`/swagger/`** (no
+external service, no account). The OpenAPI spec is generated from the handler
+annotations and committed under `docs/`. To regenerate after changing an endpoint:
+
+```bash
+go install github.com/swaggo/swag/cmd/swag@latest   # one-time
+swag init -g cmd/api/main.go --parseDependency --parseInternal -o docs
 ```
 
 ## Response envelope
