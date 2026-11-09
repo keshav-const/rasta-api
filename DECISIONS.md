@@ -11,6 +11,32 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ## M1 — public read API (in progress)
 
+### ADR-008 · Freshness is a SEPARATE, type-gated axis (not part of trust)
+- **Decision:** add a `freshness` object `{latest_source, age_days, score, label}`,
+  distinct from `trust`. It's `null` for **enduring** types (art_form, performing_art,
+  craft, festival, cuisine, dish, sport, cultural — they can't go stale). For physical
+  places it decays with the newest source's age, **fast** for volatile categories
+  (restaurant/cafe/hotel/shop/…, ~full<6mo → stale~22mo) and **slowly** for semi-stable
+  ones (monument/museum/park, ~full<2y → stale~7y). Filters: `max_source_age_days=`
+  (explicit) and `fresh_only=true` (band-aware "not stale"); plus `sort=freshness`.
+- **Why:** this is the answer to "food places / hotels have a recency factor, so how do
+  trust and recency co-exist?" (ADR-007 removed recency from trust). The two are
+  orthogonal questions — *how well-corroborated* (trust, timeless) vs *how current*
+  (freshness, only where the real thing changes). Gating freshness by type means (a)
+  timeless cultural entities are never penalized, and (b) the re-scraping treadmill
+  shrinks to just the volatile subset, which is exactly the set that *should* be
+  refreshed. A place can be high-trust **and** stale (a once-great restaurant from
+  2016) — only two separate axes can say that.
+- **Alternatives:** fold recency back into one score (rejected — ADR-007); a single flat
+  `max_age` filter for all types (rejected — would wrongly drop enduring entities and
+  couldn't match per-band stale cutoffs).
+- **Implementation:** computed on read from the same `latest` date the trust lateral
+  already fetches (no migration, near-zero cost); band logic + stale cutoffs live in one
+  place (`computeFreshness` + the `*StaleDays` consts the `fresh_only` SQL mirrors).
+- **Revisit when:** we want a source-type half-life (a Wikipedia citation stays current
+  longer than a one-off vlog), or precomputed columns if the lateral gets hot.
+
+
 ### ADR-007 · Trust/corroboration is a computed, first-class signal (Feature A — the headline)
 - **Decision:** every place carries a `trust` object — `{sources, platforms, latest_source,
   score}` — where `score` (0..1) weights **breadth** (distinct sources, 0.70) and

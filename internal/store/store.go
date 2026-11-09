@@ -88,6 +88,83 @@ func computeTrust(sources, platforms int, latest *time.Time) Trust {
 	}
 }
 
+func clamp01(x float64) float64 { return math.Max(0, math.Min(1, x)) }
+
+// Freshness is the SEPARATE, time-dependent axis (vs time-independent Trust): how
+// current our info is. It only applies to things that can change in the real world,
+// so it is nil for enduring entities (an art form or festival can't go "stale").
+// For volatile places it decays fast; for semi-stable ones, slowly.
+type Freshness struct {
+	LatestSource *string `json:"latest_source"`
+	AgeDays      *int    `json:"age_days"`
+	Score        float64 `json:"score"`          // 0..1
+	Label        string  `json:"label"`          // fresh | aging | stale | unknown
+}
+
+// enduringTypes never go stale — freshness is N/A (nil) for them.
+var enduringTypes = map[string]bool{
+	"art_form": true, "performing_art": true, "craft": true, "festival": true,
+	"cuisine": true, "dish": true, "sport": true, "cultural": true,
+}
+
+// enduringTypesList is the same set as a slice, for the SQL max_source_age filter
+// (enduring entities are never filtered out by age).
+var enduringTypesList = []string{
+	"art_form", "performing_art", "craft", "festival",
+	"cuisine", "dish", "sport", "cultural",
+}
+
+// volatileCategories change fast (open/close, prices, menus) — freshness decays fast.
+var volatileCategories = map[string]bool{
+	"restaurant": true, "cafe": true, "bar": true, "street_food": true, "bakery": true,
+	"sweet_shop": true, "hotel": true, "hostel": true, "shop": true, "market": true,
+	"mall": true, "salon": true, "coworking": true,
+}
+
+// volatileCategoriesList is the same set as a slice, for the fresh_only SQL filter.
+var volatileCategoriesList = []string{
+	"restaurant", "cafe", "bar", "street_food", "bakery", "sweet_shop",
+	"hotel", "hostel", "shop", "market", "mall", "salon", "coworking",
+}
+
+// Age (days) at which freshness crosses into "stale" (score 0.33), per band — the
+// inverse of computeFreshness's decay. fresh_only uses these so "not stale" means
+// the same thing whether you read the label or apply the filter.
+//   volatile:    180 + (1-0.33)*(900-180)  ≈ 662
+//   semi-stable: 730 + (1-0.33)*(3650-730) ≈ 2686
+const (
+	volatileStaleDays   = 662
+	semiStableStaleDays = 2686
+)
+
+// computeFreshness returns nil for enduring entities; otherwise a decayed score +
+// label from the newest source's age, with a faster decay for volatile categories
+// (restaurants/hotels) than for semi-stable ones (monuments/parks). No dated source
+// -> "unknown" (we can't vouch for currency), which fresh filters treat as not-fresh.
+func computeFreshness(entityType string, category *string, latest *time.Time) *Freshness {
+	if enduringTypes[entityType] {
+		return nil
+	}
+	fullDays, zeroDays := 730.0, 3650.0 // semi-stable default (monument, museum, park)
+	if category != nil && volatileCategories[*category] {
+		fullDays, zeroDays = 180.0, 900.0 // volatile (restaurant, hotel, shop)
+	}
+	if latest == nil {
+		return &Freshness{Score: 0, Label: "unknown"}
+	}
+	ageDays := time.Since(*latest).Hours() / 24
+	score := math.Round(clamp01(1-(ageDays-fullDays)/(zeroDays-fullDays))*100) / 100
+	ad := int(ageDays)
+	s := latest.Format("2006-01-02")
+	label := "stale"
+	if score >= 0.66 {
+		label = "fresh"
+	} else if score >= 0.33 {
+		label = "aging"
+	}
+	return &Freshness{LatestSource: &s, AgeDays: &ad, Score: score, Label: label}
+}
+
 // Place is one graph entity as the API exposes it. Pointer fields (*string,
 // *float64) are nullable: a cultural entity has no category, and an un-geocoded
 // place has no lat/lng — those come back as JSON null instead of 0/"".
@@ -100,9 +177,10 @@ type Place struct {
 	Country    string   `json:"country"`
 	Lat        *float64 `json:"lat"`
 	Lng        *float64 `json:"lng"`
-	Sources    int      `json:"sources"`
-	Score      float64  `json:"score"`
-	Trust      Trust    `json:"trust"`
+	Sources    int        `json:"sources"`
+	Score      float64    `json:"score"`
+	Trust      Trust      `json:"trust"`
+	Freshness  *Freshness `json:"freshness"` // null for enduring entities
 }
 
 // PlacesParams are the supported filters + paging for ListPlaces. Zero values
@@ -115,9 +193,12 @@ type PlacesParams struct {
 	Q            string // name search
 	MinSources   int    // only places backed by >= N distinct sources
 	MinPlatforms int    // only places corroborated across >= N distinct platforms
-	Sort         string // "" (recommendation score) | "trust" (best-corroborated first)
-	Limit        int
-	Offset       int
+	MaxSourceAge int    // days: drop places whose newest source is older (explicit)
+	FreshOnly    bool   // drop entities whose freshness label would be "stale" (band-aware)
+	//                     Both skip enduring entities — they can't go stale.
+	Sort   string // "" (recommendation score) | "trust" | "freshness"
+	Limit  int
+	Offset int
 }
 
 // ListPlaces returns active entities matching the filters, highest-scored first.
@@ -153,12 +234,34 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 	if p.Q != "" {
 		add("poi.name ILIKE '%%' || $%d || '%%'", p.Q) // %% is a literal % after fmt
 	}
+	if p.MaxSourceAge > 0 {
+		// Enduring types always pass (they can't go stale); everything else passes
+		// only if its newest source is within the explicit window. Two params.
+		args = append(args, enduringTypesList, p.MaxSourceAge)
+		where = append(where, fmt.Sprintf(
+			"(poi.entity_type = any($%d) or ev.latest >= current_date - $%d::int)",
+			len(args)-1, len(args)))
+	}
+	if p.FreshOnly {
+		// Band-aware "not stale": enduring always pass; volatile vs semi-stable use
+		// their own stale cutoff so this matches the freshness label exactly.
+		args = append(args, enduringTypesList, volatileCategoriesList)
+		e, v := len(args)-1, len(args)
+		where = append(where, fmt.Sprintf(
+			"(poi.entity_type = any($%d) "+
+				"or (coalesce(poi.poi_category = any($%d), false) and ev.latest >= current_date - %d) "+
+				"or (not coalesce(poi.poi_category = any($%d), false) and ev.latest >= current_date - %d))",
+			e, v, volatileStaleDays, v, semiStableStaleDays))
+	}
 
-	// Sort: best-corroborated first when asked, else recommendation score.
+	// Sort: best-corroborated, freshest, or (default) recommendation score.
 	orderBy := "poi.recommendation_score desc nulls last, poi.id"
-	if p.Sort == "trust" {
+	switch p.Sort {
+	case "trust":
 		orderBy = "ev.plats desc nulls last, ev.src desc nulls last, " +
 			"poi.recommendation_score desc nulls last, poi.id"
+	case "freshness":
+		orderBy = "ev.latest desc nulls last, poi.recommendation_score desc nulls last, poi.id"
 	}
 
 	args = append(args, p.Limit, p.Offset)
@@ -205,6 +308,7 @@ func (s *Store) ListPlaces(ctx context.Context, p PlacesParams) ([]Place, error)
 			return nil, err
 		}
 		pl.Trust = computeTrust(pl.Sources, plats, latest)
+		pl.Freshness = computeFreshness(pl.EntityType, pl.Category, latest)
 		places = append(places, pl)
 	}
 	return places, rows.Err() // surface any error that ended the iteration
@@ -312,6 +416,7 @@ func (s *Store) GetPlace(ctx context.Context, slug string) (*PlaceDetail, error)
 	// One evidence row per distinct source (unique(entity_id, source_id)), so the
 	// evidence count IS the distinct-source count — same basis as the list endpoint.
 	d.Trust = computeTrust(len(d.Evidence), len(platforms), latest)
+	d.Freshness = computeFreshness(d.EntityType, d.Category, latest)
 	return &d, nil
 }
 

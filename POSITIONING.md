@@ -59,8 +59,13 @@ per entity: how many *independent* sources back it, across how many platforms, h
   trustworthiness (would punish timeless cultural entities). `latest_source` is info-only.
 - List endpoints gained `min_platforms=` (cross-platform corroboration) and `sort=trust`. ✅
 - **Pitch:** *the only travel API where you can filter by how well-sourced a fact is.*
-- **Still open:** stance/agreement signal (do sources agree?); a separate type-aware
-  *freshness* signal for volatile places; precomputed trust columns if the lateral gets hot.
+- **Freshness (companion axis) ✅ SHIPPED** — a separate, type-gated `freshness` object
+  `{latest_source, age_days, score, label}`: `null` for enduring entities, fast-decay for
+  volatile places (restaurants/hotels), slow for semi-stable (monuments). Filters
+  `max_source_age_days=` / `fresh_only=true` (band-aware) + `sort=freshness`. See ADR-008.
+  Pitch sharpens to: *filter by how well-sourced AND how current each result is.*
+- **Still open:** stance/agreement signal (do sources agree?); source-type half-life;
+  precomputed trust/freshness columns if the on-read lateral gets hot.
 
 ### B — Geospatial + hybrid search  *(real DB depth, not `ILIKE`)*
 - `near=lat,lng&radius=` and `bbox=` queries over the geocoded places.

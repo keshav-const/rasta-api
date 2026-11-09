@@ -9,6 +9,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -84,6 +85,8 @@ func main() {
 				Q:            q.Get("q"),
 				MinSources:   atoiOr(q.Get("min_sources"), 0),
 				MinPlatforms: atoiOr(q.Get("min_platforms"), 0),
+				MaxSourceAge: maxSourceAge(q),
+				FreshOnly:    q.Get("fresh_only") == "true",
 				Sort:         q.Get("sort"),
 				Limit:        limit,
 				Offset:       offset,
@@ -170,6 +173,8 @@ func main() {
 				Q:            q.Get("q"),
 				MinSources:   atoiOr(q.Get("min_sources"), 0),
 				MinPlatforms: atoiOr(q.Get("min_platforms"), 0),
+				MaxSourceAge: maxSourceAge(q),
+				FreshOnly:    q.Get("fresh_only") == "true",
 				Sort:         q.Get("sort"),
 				Limit:        limit,
 				Offset:       offset,
@@ -234,4 +239,10 @@ func maxInt(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// maxSourceAge reads the explicit max_source_age_days filter (0 = no filter).
+// fresh_only is handled separately (band-aware) via PlacesParams.FreshOnly.
+func maxSourceAge(q url.Values) int {
+	return maxInt(atoiOr(q.Get("max_source_age_days"), 0), 0)
 }
