@@ -1,4 +1,6 @@
-# Rasta API
+# Khoj API
+
+[![ci](https://github.com/keshav-const/rasta-api/actions/workflows/ci.yml/badge.svg)](https://github.com/keshav-const/rasta-api/actions/workflows/ci.yml)
 
 A **provenance-first cultural data API for India.** 4,900+ creator-verified places
 *and* living traditions (crafts, festivals, cuisines, folk sports), where **every claim
@@ -81,6 +83,12 @@ anonymous). Rough tiers:
 
 The tight **anonymous daily budget** + small **max page size** make bulk-scraping the graph
 without a key impractical; volume needs a key (which is attributable and revocable).
+
+### Caching
+
+Hot `GET`s are cached in Redis for 60s and served with a strong **`ETag`** — repeats return
+`X-Cache: HIT` (skipping the database), and a conditional request (`If-None-Match`) gets
+`304 Not Modified`. The cache is keyed per plan; it degrades to a no-op without Redis.
 
 ## Endpoints
 
@@ -173,7 +181,8 @@ gitignored and `.dockerignore`d, so secrets never enter the image.
 
 ## Status
 
-M1 (public read) is feature-complete: `/healthz`, `/v1/stats`, `/v1/places`,
-`/v1/places/{slug}`, `/v1/cities`, `/v1/entities`, **trust**, **freshness**, **geo +
-fuzzy search**. Next: cursor pagination, OpenAPI/Swagger UI, Docker + deploy; then M2
-(auth, plans, rate-limiting, caching, CI).
+- **M1 (public read)** ✅ — endpoints + trust + freshness + geo/fuzzy search + keyset
+  pagination + OpenAPI/Swagger UI + Docker, deployed on Render.
+- **M2 (scalable layer)** ✅ — API-key auth → plans, Redis rate limiting + anti-scraping,
+  response caching (ETag/304), unit tests + GitHub Actions CI.
+- **Next:** Feature C (MCP server + NL query), M3 (developer portal), M4 (Razorpay paywall).

@@ -9,7 +9,33 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ---
 
-## M2 — scalable layer (in progress)
+## M2 — scalable layer (complete)
+
+### ADR-016 · Unit tests for the core logic + GitHub Actions CI
+- **Decision:** white-box unit tests for the pure business logic — trust scoring (saturation,
+  diversity), freshness (enduring→nil, volatile decay, labels), cursor round-trip, key
+  hashing, header key-extraction, plan resolution, ETag — plus a GitHub Actions workflow
+  (`build` → `vet` → `test`) on every push/PR. **No DB in CI.**
+- **Why:** those functions hold the actual decisions; testing them is the high-value, fast,
+  deterministic coverage, and it runs anywhere with no secrets — so the CI badge stays green
+  without a database. Handler/integration tests need a throwaway Postgres (service container +
+  migrations); deferred rather than block CI on infra.
+- **Revisit when:** we want end-to-end handler tests — add a Postgres service to the workflow,
+  run migrations, and seed a tiny fixture.
+
+### ADR-015 · Response caching (Redis) + ETag / 304
+- **Decision:** a GET cache middleware (after auth + rate limit) stores each 200 JSON body in
+  Redis for 60s and serves repeats from there (`X-Cache: HIT`), skipping the DB. It sets a
+  strong **ETag** and honours **If-None-Match → 304**. The cache key includes the caller's
+  plan (page caps differ by tier). Fails open (no Redis / error → just runs the handler).
+- **Why:** hot queries (the same city/places page) stop hitting Postgres — less cost, lower
+  latency — and 304s save bandwidth for polling clients. A 60s TTL is safe because the graph
+  only changes on a batch run; short enough that a new batch shows up within a minute.
+- **Alternatives:** in-memory cache (per-instance, lost on restart, useless across Render
+  scale-out); a CDN (overkill for JSON with per-plan variance); long TTL + explicit
+  invalidation (more moving parts than M2 needs — revisit below).
+- **Revisit when:** we bust the cache on ingest (push-invalidate) instead of relying on TTL,
+  or add stale-while-revalidate.
 
 ### ADR-014 · Plan-aware rate limiting + anti-scraping (Redis fixed windows)
 - **Decision:** a middleware on `/v1` (after auth) enforces two fixed windows per caller —

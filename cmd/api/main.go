@@ -32,8 +32,10 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 
 	"github.com/keshav-const/rasta-api/internal/auth"
+	"github.com/keshav-const/rasta-api/internal/cache"
 	"github.com/keshav-const/rasta-api/internal/config"
 	"github.com/keshav-const/rasta-api/internal/httpx"
+	"github.com/keshav-const/rasta-api/internal/kv"
 	"github.com/keshav-const/rasta-api/internal/ratelimit"
 	"github.com/keshav-const/rasta-api/internal/store"
 
@@ -66,11 +68,12 @@ func main() {
 	}
 	a := &api{db: store.New(pool), pool: pool}
 
-	limiter := ratelimit.New(cfg.RedisRestURL, cfg.RedisRestToken)
-	if limiter.Enabled() {
-		log.Println("rate limiting: enabled (Upstash Redis)")
+	redis := kv.New(cfg.RedisRestURL, cfg.RedisRestToken)
+	limiter := ratelimit.New(redis)
+	if redis.Enabled() {
+		log.Println("redis: enabled (rate limiting + response cache)")
 	} else {
-		log.Println("rate limiting: DISABLED (set REDIS_REST_URL/REDIS_REST_TOKEN) — fail-open")
+		log.Println("redis: DISABLED (set REDIS_REST_URL/REDIS_REST_TOKEN) — rate limit + cache off")
 	}
 
 	// The middleware chain every request flows through.
@@ -100,6 +103,8 @@ func main() {
 		r.Use(auth.Middleware(a.db))
 		// Then enforce the plan's rate limits (429 + RateLimit-* headers).
 		r.Use(rateLimitMiddleware(limiter))
+		// Then serve hot GETs from Redis + ETag/304 (60s TTL; data changes rarely).
+		r.Use(cache.Middleware(redis, 60))
 		r.Get("/stats", a.stats)
 		r.Get("/places", a.listPlaces)
 		r.Get("/places/{slug}", a.getPlace)
