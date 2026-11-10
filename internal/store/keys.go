@@ -36,10 +36,22 @@ func (s *Store) GetAPIKeyByHash(ctx context.Context, hash string) (*APIKey, erro
 	return &k, nil
 }
 
-// TouchKeyUsage stamps last_used_at. Fire-and-forget: errors are ignored so a
-// usage write never fails a request.
-func (s *Store) TouchKeyUsage(ctx context.Context, id string) {
-	_, _ = s.pool.Exec(ctx, `update api_keys set last_used_at = now() where id = $1::uuid`, id)
+// RecordKeyUsage counts one authenticated request: it bumps today's per-key
+// counter in api_usage (upsert on the unique (api_key_id, day)) AND stamps
+// last_used_at — both in ONE round-trip via a data-modifying CTE. Fire-and-forget:
+// errors are ignored so a usage write never fails a request, and it runs in a
+// goroutine so the DB write is off the request's latency path.
+func (s *Store) RecordKeyUsage(ctx context.Context, id string) {
+	// Bucket by the UTC date explicitly (not current_date, which follows the session
+	// timezone) so the per-day grouping always matches the dashboard's UTC day math.
+	_, _ = s.pool.Exec(ctx, `
+		with bump as (
+			insert into api_usage (api_key_id, day, requests)
+			values ($1::uuid, (now() at time zone 'utc')::date, 1)
+			on conflict (api_key_id, day)
+			do update set requests = api_usage.requests + 1
+		)
+		update api_keys set last_used_at = now() where id = $1::uuid`, id)
 }
 
 // InsertAPIKey stores a new key (hash only) and returns its id. Used by the

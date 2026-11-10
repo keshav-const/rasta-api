@@ -15,6 +15,26 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 > [`../ts/web/ARCHITECTURE.md`](../ts/web/ARCHITECTURE.md). These two ADRs are here because they
 > constrain **this** service.
 
+### ADR-019 · Per-key usage counted by the API (fire-and-forget daily upsert)
+- **Decision:** on every authenticated request the API bumps a per-key **daily** counter
+  in `api_usage(api_key_id, day, requests)` — an upsert on the unique `(api_key_id, day)` —
+  **and** stamps `last_used_at`, both in one round-trip via a data-modifying CTE
+  (`RecordKeyUsage`). It runs in a goroutine, errors ignored, so it's off the request's
+  latency path and never fails a request. The day bucket is explicit **UTC**
+  (`(now() at time zone 'utc')::date`) so it matches the dashboard's day math. The portal
+  reads this table directly (scoped to the dev's key ids) — no usage endpoint on the API.
+- **Alternatives:** per-request row (an event log) — accurate but unbounded and needs
+  roll-ups; Redis counters flushed nightly — fast but a flush gap loses data and adds a job;
+  a `GET /v1/usage` endpoint — more API surface for data the portal can read straight from PG.
+- **Why:** one row per key per day is tiny, durable, and already the shape the dashboard
+  wants (totals + a sparkline). Fire-and-forget keeps the hot path fast; a lost increment
+  under load is acceptable for a usage meter (it's not billing-grade — that tightens in M4).
+  Daily granularity, not per-minute, because the view shows trends, and the rate-limiter
+  already owns burst control in Redis.
+- **Revisit when:** billing needs exact counts (M4) → either make the write non-fire-and-forget
+  on metered plans, or reconcile against Razorpay; or we want hourly granularity → add an
+  `hour` bucket or a short-retention event table rolled up nightly.
+
 ### ADR-018 · Key issuance lives in the Next app; the Go API only reads keys
 - **Decision:** developers self-issue/revoke keys from the portal (Next Server Actions, using the
   `service_role` Postgres client). This Go service **never writes** `api_keys` — it only reads a

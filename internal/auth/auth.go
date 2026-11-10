@@ -85,7 +85,7 @@ func Middleware(db *store.Store) func(http.Handler) http.Handler {
 					return
 				}
 				plan = planByName(k.Plan)
-				go db.TouchKeyUsage(context.Background(), k.ID) // fire-and-forget
+				go db.RecordKeyUsage(context.Background(), k.ID) // fire-and-forget: count + last_used_at
 				r = r.WithContext(context.WithValue(r.Context(), keyIDCtxKey, k.ID))
 			}
 			r = r.WithContext(context.WithValue(r.Context(), planCtxKey, plan))
