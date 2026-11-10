@@ -11,6 +11,31 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ## M2 — scalable layer (in progress)
 
+### ADR-014 · Plan-aware rate limiting + anti-scraping (Redis fixed windows)
+- **Decision:** a middleware on `/v1` (after auth) enforces two fixed windows per caller —
+  per-minute (burst) and per-day (quota) — in **one atomic Lua `EVAL`** on Upstash Redis
+  (REST), i.e. one round-trip per request. Over budget → `429 rate_limited` +
+  `RateLimit-Limit/Remaining/Reset` + `Retry-After`. Keyed by API-key id, or **client IP
+  for anonymous**. **Anti-scrape** is three layers: plan-sized limits, a **tight anonymous
+  daily budget (200/day)**, and a **plan-aware max page size** (anonymous `limit` capped at
+  25) — so pulling the ~5k-entity graph without a key isn't feasible in a day.
+- **Why:** this is the cost/abuse cap. Fixed windows in one Lua call keep it to a single
+  HTTP round-trip (Upstash REST latency matters); limits compared in Go so one script fits
+  all plans. The limiter **fails open** (Redis error/unconfigured → allow) — a Redis hiccup
+  degrades protection rather than taking the API down; it's also a no-op locally without
+  creds. Scraping defense leans on making *volume* require a key (attributable, revocable).
+- **Alternatives:** in-memory limiter (doesn't survive restarts or multiple instances);
+  sliding-window log (more accurate, but multiple Redis ops/round-trips); token bucket
+  (fine, similar). Fixed window is the simplest thing that's correct enough and cheap.
+- **Caveats:** (1) IP-based anonymous limiting behind a proxy can be evaded by spoofing
+  `X-Forwarded-For` — the robust answer is "require a key for volume" (tiers enable it) and
+  trusting the platform's client-IP header; the daily budget still deters casual scraping.
+  (2) `RateLimit-Reset` is the window length, not the exact TTL. (3) Shares the hackathon's
+  Upstash instance, isolated by a `khoj:rl:` key prefix — a dedicated instance later.
+- **Revisit when:** we add caching (Inc 3, cuts DB hits further), feature-gate full evidence
+  to Pro, move to a dedicated Upstash, or want sliding-window accuracy.
+
+
 ### ADR-013 · API-key auth → plan, with a keyless public tier
 - **Decision:** an auth middleware on `/v1` resolves the caller's **plan** from their key
   (`X-API-Key` or `Authorization: Bearer`), attaches it to the request context, and echoes

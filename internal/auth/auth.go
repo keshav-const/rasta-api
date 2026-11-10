@@ -16,21 +16,25 @@ import (
 )
 
 // Plan is a pricing tier: the limits + feature gates the API enforces. "anonymous"
-// is the keyless public tier, so the live demo keeps working without a key.
+// is the keyless public tier, so the live demo keeps working without a key — but it's
+// deliberately tight (low daily budget + small max page) to make bulk scraping of the
+// dataset impractical without a key.
 type Plan struct {
-	Name         string `json:"name"`
-	DailyLimit   int    `json:"daily_limit"` // requests/day (enforced in Inc 2)
-	RatePerSec   int    `json:"rate_per_sec"`
-	FullEvidence bool   `json:"full_evidence"` // example feature gate (Pro+)
+	Name           string `json:"name"`
+	RequestsPerMin int    `json:"requests_per_min"` // burst control
+	RequestsPerDay int    `json:"requests_per_day"` // quota (anti-scrape)
+	MaxPageSize    int    `json:"max_page_size"`    // caps ?limit= (anti-scrape)
+	FullEvidence   bool   `json:"full_evidence"`    // feature gate (Pro+)
 }
 
 // Plans is the tier table. Keeping it in code (not the DB) makes limits one obvious,
-// reviewable place; the DB only stores which plan a key is on.
+// reviewable place; the DB only stores which plan a key is on. Anonymous is sized so
+// pulling the whole ~5k-entity graph in a day isn't feasible (200/day x 25/page).
 var Plans = map[string]Plan{
-	"anonymous":  {"anonymous", 500, 5, false},
-	"free":       {"free", 5000, 10, false},
-	"pro":        {"pro", 100000, 50, true},
-	"enterprise": {"enterprise", 2000000, 200, true},
+	"anonymous":  {"anonymous", 30, 200, 25, false},
+	"free":       {"free", 60, 5000, 100, false},
+	"pro":        {"pro", 600, 100000, 100, true},
+	"enterprise": {"enterprise", 3000, 2000000, 100, true},
 }
 
 func planByName(name string) Plan {

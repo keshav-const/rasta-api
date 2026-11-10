@@ -13,4 +13,8 @@ services:
     envVars:
       - key: DATABASE_URL
         sync: false         # set in the dashboard — Supabase IPv4 session-pooler URL
+      - key: REDIS_REST_URL
+        sync: false         # Upstash Redis REST URL (rate limiting). If unset, limiter is off.
+      - key: REDIS_REST_TOKEN
+        sync: false         # Upstash Redis REST token
       # PORT is injected by Render automatically; the app reads $PORT (defaults 8080).

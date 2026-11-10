@@ -58,13 +58,29 @@ curl -H "X-API-Key: khoj_..." https://khoj-ibli.onrender.com/v1/places
 ```
 
 The response echoes your tier in the **`X-Plan`** header; an invalid/revoked key returns
-`401 invalid_key`. Tiers: `anonymous` < `free` < `pro` < `enterprise` (limits enforced by
-the rate-limiter). Keys are stored as **sha256 hashes only**. Mint one (dev tool until the
+`401 invalid_key`. Keys are stored as **sha256 hashes only**. Mint one (dev tool until the
 portal lands in M3):
 
 ```bash
 go run ./cmd/mintkey -plan pro -name "my app"   # prints the raw key once
 ```
+
+### Rate limits & anti-scraping
+
+Every `/v1` request is rate-limited by plan (Upstash Redis, per-minute burst + per-day
+quota). Over budget → **`429 rate_limited`** with `RateLimit-Limit` / `RateLimit-Remaining`
+/ `RateLimit-Reset` + `Retry-After` headers. Limits are keyed by API key (or client IP for
+anonymous). Rough tiers:
+
+| plan | req/min | req/day | max `limit` |
+|---|---|---|---|
+| anonymous (no key) | 30 | 200 | 25 |
+| free | 60 | 5,000 | 100 |
+| pro | 600 | 100,000 | 100 |
+| enterprise | 3,000 | 2,000,000 | 100 |
+
+The tight **anonymous daily budget** + small **max page size** make bulk-scraping the graph
+without a key impractical; volume needs a key (which is attributable and revocable).
 
 ## Endpoints
 

@@ -34,6 +34,7 @@ import (
 	"github.com/keshav-const/rasta-api/internal/auth"
 	"github.com/keshav-const/rasta-api/internal/config"
 	"github.com/keshav-const/rasta-api/internal/httpx"
+	"github.com/keshav-const/rasta-api/internal/ratelimit"
 	"github.com/keshav-const/rasta-api/internal/store"
 
 	_ "github.com/keshav-const/rasta-api/docs" // generated OpenAPI spec (swag init)
@@ -65,6 +66,13 @@ func main() {
 	}
 	a := &api{db: store.New(pool), pool: pool}
 
+	limiter := ratelimit.New(cfg.RedisRestURL, cfg.RedisRestToken)
+	if limiter.Enabled() {
+		log.Println("rate limiting: enabled (Upstash Redis)")
+	} else {
+		log.Println("rate limiting: DISABLED (set REDIS_REST_URL/REDIS_REST_TOKEN) — fail-open")
+	}
+
 	// The middleware chain every request flows through.
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
@@ -90,6 +98,8 @@ func main() {
 		// Resolve the caller's plan from their API key (anonymous if none). /healthz
 		// and /swagger stay public and un-gated above.
 		r.Use(auth.Middleware(a.db))
+		// Then enforce the plan's rate limits (429 + RateLimit-* headers).
+		r.Use(rateLimitMiddleware(limiter))
 		r.Get("/stats", a.stats)
 		r.Get("/places", a.listPlaces)
 		r.Get("/places/{slug}", a.getPlace)
@@ -181,7 +191,7 @@ func (a *api) stats(w http.ResponseWriter, req *http.Request) {
 // @Router       /v1/places [get]
 func (a *api) listPlaces(w http.ResponseWriter, req *http.Request) {
 	q := req.URL.Query()
-	limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
+	limit := clampInt(atoiOr(q.Get("limit"), 20), 1, auth.PlanFromContext(req.Context()).MaxPageSize)
 	offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
 	params := store.PlacesParams{
 		City:         q.Get("city"),
@@ -252,7 +262,7 @@ func (a *api) getPlace(w http.ResponseWriter, req *http.Request) {
 // @Router       /v1/cities [get]
 func (a *api) listCities(w http.ResponseWriter, req *http.Request) {
 	q := req.URL.Query()
-	limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
+	limit := clampInt(atoiOr(q.Get("limit"), 20), 1, auth.PlanFromContext(req.Context()).MaxPageSize)
 	offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
 	params := store.CitiesParams{
 		Country:   q.Get("country"),
@@ -305,7 +315,7 @@ func (a *api) listEntities(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	// ?type=... -> reuse the places query, pinned to this entity_type.
-	limit := clampInt(atoiOr(q.Get("limit"), 20), 1, 100)
+	limit := clampInt(atoiOr(q.Get("limit"), 20), 1, auth.PlanFromContext(req.Context()).MaxPageSize)
 	offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
 	eparams := store.PlacesParams{
 		EntityType:   typ,
@@ -334,6 +344,50 @@ func (a *api) listEntities(w http.ResponseWriter, req *http.Request) {
 		meta["next_cursor"] = next
 	}
 	httpx.JSON(w, http.StatusOK, places, meta)
+}
+
+// rateLimitMiddleware enforces the caller's plan budget via Redis. It keys on the
+// API key id when authenticated, else the client IP (so anonymous abuse is capped
+// per-IP). It always sets RateLimit-* headers and 429s when over budget; if the
+// limiter is disabled or errors, it lets the request through (fail-open).
+func rateLimitMiddleware(l *ratelimit.Limiter) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if !l.Enabled() {
+				next.ServeHTTP(w, r)
+				return
+			}
+			plan := auth.PlanFromContext(r.Context())
+			id := auth.KeyIDFromContext(r.Context())
+			if id == "" {
+				id = "ip:" + clientIP(r)
+			}
+			id = plan.Name + ":" + id // separate buckets per tier
+			res, err := l.Allow(r.Context(), id, plan.RequestsPerMin, plan.RequestsPerDay)
+			if err == nil {
+				w.Header().Set("RateLimit-Limit", strconv.Itoa(res.Limit))
+				w.Header().Set("RateLimit-Remaining", strconv.Itoa(res.Remaining))
+				w.Header().Set("RateLimit-Reset", strconv.Itoa(res.ResetSec))
+				if !res.Allowed {
+					w.Header().Set("Retry-After", strconv.Itoa(res.ResetSec))
+					httpx.Error(w, http.StatusTooManyRequests, "rate_limited",
+						"rate limit exceeded for your plan — slow down, or use an API key for a higher tier")
+					return
+				}
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// clientIP is the caller's IP (middleware.RealIP has already resolved it into
+// RemoteAddr); strip the port.
+func clientIP(r *http.Request) string {
+	ip := r.RemoteAddr
+	if i := strings.LastIndex(ip, ":"); i != -1 {
+		ip = ip[:i]
+	}
+	return ip
 }
 
 // atoiOr parses s as an int, falling back to def on empty/invalid input — so a
