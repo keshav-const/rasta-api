@@ -1,0 +1,16 @@
+# Render blueprint (Infrastructure-as-Code). On Render: New > Blueprint > point at
+# this repo, and it provisions the service below. DATABASE_URL is marked sync:false,
+# so Render prompts you to paste it (the secret never lives in git).
+services:
+  - type: web
+    name: rasta-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    plan: free              # free tier; spins down when idle (cold start ~50s)
+    region: singapore       # closest Render region to Supabase ap-south-1 (Mumbai)
+    healthCheckPath: /healthz
+    autoDeploy: true        # redeploy on every push to the default branch
+    envVars:
+      - key: DATABASE_URL
+        sync: false         # set in the dashboard — Supabase IPv4 session-pooler URL
+      # PORT is injected by Render automatically; the app reads $PORT (defaults 8080).
