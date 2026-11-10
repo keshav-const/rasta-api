@@ -9,6 +9,39 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ---
 
+## M3 — developer portal (in progress)
+
+> The portal lives in the `web/` repo (Next.js). Deep write-up:
+> [`../ts/web/ARCHITECTURE.md`](../ts/web/ARCHITECTURE.md). These two ADRs are here because they
+> constrain **this** service.
+
+### ADR-018 · Key issuance lives in the Next app; the Go API only reads keys
+- **Decision:** developers self-issue/revoke keys from the portal (Next Server Actions, using the
+  `service_role` Postgres client). This Go service **never writes** `api_keys` — it only reads a
+  key → plan. The `mintkey` CLI stays as a dev/ops tool.
+- **Alternatives:** a `POST /v1/keys` endpoint on the Go API; issuing from a separate admin service.
+- **Why:** issuance is an *account mutation*; serving is *read-only*. Splitting them means the
+  always-on data plane holds **no write credential** for the key table and can't be coerced into
+  minting keys, while the one privileged credential (`service_role`) lives in the one app that
+  already owns accounts + sessions. Fewer endpoints to secure on the hot path.
+- **Revisit when:** we want programmatic key provisioning (e.g. an enterprise onboarding API) —
+  then add a narrowly-scoped, separately-authed endpoint, still not on the public `/v1` surface.
+
+### ADR-017 · The key format is a cross-language contract (TS mints, Go validates)
+- **Decision:** the portal (`web/lib/apikey.ts`, Web Crypto) and this service
+  (`internal/auth`, `crypto/sha256`) implement the **same** format independently — no shared lib:
+  `raw = "khoj_" + 24 random bytes hex`; store only `sha256(raw)` hex; `prefix = raw[:14]`.
+- **Alternatives:** a shared package (impossible across Go/TS); the Go API issuing keys (see ADR-018);
+  a JWT/asymmetric scheme.
+- **Why:** an opaque random token checked by hash is the simplest thing that is also safe — only the
+  hash is stored, so a DB leak can't be replayed, and the raw key is unrecoverable (hence the
+  one-time reveal). Two tiny implementations agreeing on a byte format is cheaper than any shared
+  build. **Verified end-to-end:** a TS-minted key authenticates here as its plan; revoke → 401.
+- **Revisit when:** keys need embedded claims or rotation without a DB hit — move to signed tokens
+  (and then the signing key *is* shared state to manage).
+
+---
+
 ## M2 — scalable layer (complete)
 
 ### ADR-016 · Unit tests for the core logic + GitHub Actions CI
