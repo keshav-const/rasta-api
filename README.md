@@ -47,6 +47,25 @@ swag init -g cmd/api/main.go --parseDependency --parseInternal -o docs
 
 ---
 
+## Authentication & plans
+
+Read access works **without a key** (the `anonymous` tier), so the demo is open. A key
+raises your limits and unlocks Pro features — send it as a header:
+
+```bash
+curl -H "X-API-Key: khoj_..." https://khoj-ibli.onrender.com/v1/places
+# or: -H "Authorization: Bearer khoj_..."
+```
+
+The response echoes your tier in the **`X-Plan`** header; an invalid/revoked key returns
+`401 invalid_key`. Tiers: `anonymous` < `free` < `pro` < `enterprise` (limits enforced by
+the rate-limiter). Keys are stored as **sha256 hashes only**. Mint one (dev tool until the
+portal lands in M3):
+
+```bash
+go run ./cmd/mintkey -plan pro -name "my app"   # prints the raw key once
+```
+
 ## Endpoints
 
 ### `GET /healthz`

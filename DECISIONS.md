@@ -9,7 +9,27 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ---
 
-## M1 — public read API (in progress)
+## M2 — scalable layer (in progress)
+
+### ADR-013 · API-key auth → plan, with a keyless public tier
+- **Decision:** an auth middleware on `/v1` resolves the caller's **plan** from their key
+  (`X-API-Key` or `Authorization: Bearer`), attaches it to the request context, and echoes
+  `X-Plan`. **No key → `anonymous`** (a real tier with low limits), so the live demo keeps
+  working; a **present-but-invalid/revoked key → 401**. Keys are stored as **sha256 hashes
+  only** (raw key shown once by the `mintkey` tool). Plans (`anonymous/free/pro/enterprise`)
+  and their limits live in code; the DB only records which plan a key is on.
+- **Why:** the plan is the thing every scalable concern hangs off (rate limits, feature
+  gates, usage) — resolving it once in middleware keeps handlers unaware of tiers. Hashing
+  means a DB leak can't call the API. A keyless tier (vs mandatory keys) preserves the
+  public demo while still exercising the whole plan machinery. Limits-in-code are one
+  reviewable place; plan-on-key is a stopgap until M3 moves it to the user/subscription.
+- **Alternatives:** mandatory keys (breaks the public demo); JWTs (no revocation without a
+  blocklist — opaque keys + a hash lookup revoke instantly); plan in a config service
+  (overkill now).
+- **Revisit at M3/M4:** move the plan to the user/subscription (keys inherit), add scopes,
+  and issue keys from the portal instead of `mintkey`.
+
+## M1 — public read API (complete)
 
 ### ADR-012 · Container: multi-stage build → distroless static, nonroot
 - **Decision:** a two-stage Dockerfile — build a fully static binary (`CGO_ENABLED=0`,

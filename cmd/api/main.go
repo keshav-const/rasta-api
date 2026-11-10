@@ -31,6 +31,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	httpSwagger "github.com/swaggo/http-swagger"
 
+	"github.com/keshav-const/rasta-api/internal/auth"
 	"github.com/keshav-const/rasta-api/internal/config"
 	"github.com/keshav-const/rasta-api/internal/httpx"
 	"github.com/keshav-const/rasta-api/internal/store"
@@ -86,6 +87,9 @@ func main() {
 	r.Get("/swagger/*", httpSwagger.Handler(httpSwagger.URL("/swagger/doc.json")))
 
 	r.Route("/v1", func(r chi.Router) {
+		// Resolve the caller's plan from their API key (anonymous if none). /healthz
+		// and /swagger stay public and un-gated above.
+		r.Use(auth.Middleware(a.db))
 		r.Get("/stats", a.stats)
 		r.Get("/places", a.listPlaces)
 		r.Get("/places/{slug}", a.getPlace)
