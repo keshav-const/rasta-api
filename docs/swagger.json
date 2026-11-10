@@ -1,12 +1,8 @@
 {
-    "schemes": [
-        "http",
-        "https"
-    ],
     "swagger": "2.0",
     "info": {
         "description": "A provenance-first cultural data API for India: 4,900+ creator-verified places and living traditions where every claim cites its source. Each entity carries a trust signal (how well-corroborated) and, where applicable, a freshness signal (how current). Supports geo (near/bbox) and fuzzy search.",
-        "title": "Rasta API",
+        "title": "Khoj API",
         "contact": {},
         "version": "1.0"
     },

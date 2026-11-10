@@ -3,11 +3,13 @@
 // Wiring: load config -> open a pgx pool to Supabase -> build the chi router with
 // the middleware chain -> serve with graceful shutdown.
 //
-// @title           Rasta API
+// @title           Khoj API
 // @version         1.0
 // @description     A provenance-first cultural data API for India: 4,900+ creator-verified places and living traditions where every claim cites its source. Each entity carries a trust signal (how well-corroborated) and, where applicable, a freshness signal (how current). Supports geo (near/bbox) and fuzzy search.
 // @BasePath        /
-// @schemes         http https
+// (no @schemes — Swagger UI then uses the page's own protocol, so "Try it out"
+//
+//	calls https on Render and http locally, avoiding mixed-content failures.)
 package main
 
 import (
@@ -25,6 +27,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
 	"github.com/jackc/pgx/v5/pgxpool"
 	httpSwagger "github.com/swaggo/http-swagger"
 
@@ -68,6 +71,14 @@ func main() {
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(15 * time.Second))
+	// CORS: this is a public read API, so allow any origin to GET it (from browsers,
+	// the playground, other sites). Read-only, so no credentials/writes exposed.
+	r.Use(cors.Handler(cors.Options{
+		AllowedOrigins: []string{"*"},
+		AllowedMethods: []string{"GET", "OPTIONS"},
+		AllowedHeaders: []string{"Accept", "Content-Type"},
+		MaxAge:         300,
+	}))
 
 	r.Get("/healthz", a.healthz)
 	// Interactive API docs (Swagger UI) served from our own binary — no external
