@@ -5,7 +5,27 @@
 //
 // @title           Khoj API
 // @version         1.0
-// @description     A provenance-first cultural data API for India: 4,900+ creator-verified places and living traditions where every claim cites its source. Each entity carries a trust signal (how well-corroborated) and, where applicable, a freshness signal (how current). Supports geo (near/bbox) and fuzzy search.
+// @description     A **provenance-first cultural data API for India** — thousands of creator-verified places and living traditions where every claim cites its source.
+// @description
+// @description     ## Authentication
+// @description     Send your key as the `X-API-Key` header. You can also call the API **without a key** (anonymous tier) to try it — anonymous requests are tightly rate-limited. Get a key at the developer portal.
+// @description     ```
+// @description     curl -H "X-API-Key: khoj_…" https://khoj-ibli.onrender.com/v1/places?city=jaipur
+// @description     ```
+// @description
+// @description     ## Plans & rate limits
+// @description     Every response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` headers; over-limit requests get `429`.
+// @description     | Plan | req/min | req/day | max page | full evidence |
+// @description     |------|--------:|--------:|---------:|:--:|
+// @description     | anonymous | 30 | 200 | 25 | — |
+// @description     | free | 60 | 5,000 | 100 | — |
+// @description     | pro | 600 | 100,000 | 100 | ✓ |
+// @description
+// @description     ## Trust & freshness — the two signals that make Khoj different
+// @description     Each entity carries a **`trust`** object (how well-corroborated: distinct sources × platform diversity, score 0–1) and, where applicable, a **`freshness`** object (how current: `fresh`/`aging`/`stale`, or `null` for enduring traditions). Filter on them with `min_sources`, `min_platforms`, `fresh_only`, and sort with `sort=trust|freshness`.
+// @description
+// @description     ## Pagination
+// @description     Default ordering supports **keyset pagination**: pass the `next_cursor` from a response's `meta` back as `cursor=` for the next page.
 // @BasePath        /
 // (no @schemes — Swagger UI then uses the page's own protocol, so "Try it out"
 //

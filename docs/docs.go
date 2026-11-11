@@ -29,13 +29,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope"
+                            "$ref": "#/definitions/httpx.Envelope"
                         }
                     },
                     "503": {
                         "description": "Service Unavailable",
                         "schema": {
-                            "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope"
+                            "$ref": "#/definitions/httpx.Envelope"
                         }
                     }
                 }
@@ -93,7 +93,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope"
+                            "$ref": "#/definitions/httpx.Envelope"
                         }
                     }
                 }
@@ -187,7 +187,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope"
+                            "$ref": "#/definitions/httpx.Envelope"
                         }
                     }
                 }
@@ -305,7 +305,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope"
+                            "$ref": "#/definitions/httpx.Envelope"
                         }
                     }
                 }
@@ -334,13 +334,13 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope"
+                            "$ref": "#/definitions/httpx.Envelope"
                         }
                     },
                     "404": {
                         "description": "Not Found",
                         "schema": {
-                            "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope"
+                            "$ref": "#/definitions/httpx.Envelope"
                         }
                     }
                 }
@@ -360,7 +360,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.Envelope"
+                            "$ref": "#/definitions/httpx.Envelope"
                         }
                     }
                 }
@@ -368,7 +368,7 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "github_com_keshav-const_rasta-api_internal_httpx.APIError": {
+        "httpx.APIError": {
             "type": "object",
             "properties": {
                 "code": {
@@ -379,12 +379,12 @@ const docTemplate = `{
                 }
             }
         },
-        "github_com_keshav-const_rasta-api_internal_httpx.Envelope": {
+        "httpx.Envelope": {
             "type": "object",
             "properties": {
                 "data": {},
                 "error": {
-                    "$ref": "#/definitions/github_com_keshav-const_rasta-api_internal_httpx.APIError"
+                    "$ref": "#/definitions/httpx.APIError"
                 },
                 "meta": {}
             }
@@ -399,7 +399,7 @@ var SwaggerInfo = &swag.Spec{
 	BasePath:         "/",
 	Schemes:          []string{},
 	Title:            "Khoj API",
-	Description:      "A provenance-first cultural data API for India: 4,900+ creator-verified places and living traditions where every claim cites its source. Each entity carries a trust signal (how well-corroborated) and, where applicable, a freshness signal (how current). Supports geo (near/bbox) and fuzzy search.",
+	Description:      "A **provenance-first cultural data API for India** — thousands of creator-verified places and living traditions where every claim cites its source.\n\n## Authentication\nSend your key as the `X-API-Key` header. You can also call the API **without a key** (anonymous tier) to try it — anonymous requests are tightly rate-limited. Get a key at the developer portal.\n```\ncurl -H \"X-API-Key: khoj_…\" https://khoj-ibli.onrender.com/v1/places?city=jaipur\n```\n\n## Plans & rate limits\nEvery response carries `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` headers; over-limit requests get `429`.\n| Plan | req/min | req/day | max page | full evidence |\n|------|--------:|--------:|---------:|:--:|\n| anonymous | 30 | 200 | 25 | — |\n| free | 60 | 5,000 | 100 | — |\n| pro | 600 | 100,000 | 100 | ✓ |\n\n## Trust & freshness — the two signals that make Khoj different\nEach entity carries a **`trust`** object (how well-corroborated: distinct sources × platform diversity, score 0–1) and, where applicable, a **`freshness`** object (how current: `fresh`/`aging`/`stale`, or `null` for enduring traditions). Filter on them with `min_sources`, `min_platforms`, `fresh_only`, and sort with `sort=trust|freshness`.\n\n## Pagination\nDefault ordering supports **keyset pagination**: pass the `next_cursor` from a response's `meta` back as `cursor=` for the next page.",
 	InfoInstanceName: "swagger",
 	SwaggerTemplate:  docTemplate,
 	LeftDelim:        "{{",
