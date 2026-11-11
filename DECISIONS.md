@@ -15,6 +15,22 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 > [`../ts/web/ARCHITECTURE.md`](../ts/web/ARCHITECTURE.md). These two ADRs are here because they
 > constrain **this** service.
 
+### ADR-020 · One developer portal (on the web app); docs render from the live spec
+- **Decision:** the whole developer surface — landing, **docs**, signup/login, dashboard — lives
+  under `/developers/*` on the Next app. The docs page renders **this service's live OpenAPI spec**
+  (`/swagger/doc.json`) with Scalar. This API keeps serving its own `/swagger/` UI as the raw/backup
+  view, and its CORS stays `*` so the portal (another origin) can fetch the spec and run "try it".
+- **Alternatives:** hand-written docs in the web app (drift from the API); send developers to the
+  API's `/swagger/` for docs but the web app for signup (the split that prompted this — two domains,
+  no shared front door); serve the whole portal from Go (accounts/sessions/HTML don't belong in the
+  read-only data plane).
+- **Why:** the API's annotations are the single source of truth; rendering that same spec in the
+  portal means docs can't go stale, while the developer gets one coherent place to read, sign up,
+  get a key, and try calls. The spec is authored here (swaggo) precisely so the portal can consume
+  it without duplication.
+- **Revisit when:** we want versioned/multi-spec docs or offline docs → snapshot the spec at build
+  and serve a pinned copy per API version.
+
 ### ADR-019 · Per-key usage counted by the API (fire-and-forget daily upsert)
 - **Decision:** on every authenticated request the API bumps a per-key **daily** counter
   in `api_usage(api_key_id, day, requests)` — an upsert on the unique `(api_key_id, day)` —
