@@ -9,6 +9,22 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
 
 ---
 
+## M4 — paywall (in progress)
+
+### ADR-021 · The paywall needs ZERO API changes — plan is read fresh per request
+- **Decision:** billing (Razorpay subscriptions) lives entirely in the Next app + DB. This service
+  is untouched: it already resolves a key → plan by reading `api_keys.plan` on **every** request
+  (no plan cache). So granting Pro is just the control plane stamping `plan='pro'` on the user's
+  keys; the next request here enforces it.
+- **Alternatives:** a plan/entitlements cache in Redis (would need busting on every billing event);
+  the API calling a billing service to resolve entitlements (couples the hot path to billing uptime);
+  a `users.plan` join on each auth lookup (extra query; the `plan` column already denormalizes it).
+- **Why:** reading the column per-request is cheap (indexed hash lookup already happens for auth) and
+  makes plan changes instantaneous without any cross-service coordination or cache invalidation. The
+  data plane stays a pure read path; billing is a write the control plane owns (cf. ADR-018).
+- **Revisit when:** per-request DB load becomes a concern → cache key→plan in Redis with a short TTL
+  and bust it from the webhook; or entitlements grow beyond a single `plan` string.
+
 ## M3 — developer portal (in progress)
 
 > The portal lives in the `web/` repo (Next.js). Deep write-up:
