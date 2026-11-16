@@ -2,9 +2,11 @@
 
 [![ci](https://github.com/keshav-const/rasta-api/actions/workflows/ci.yml/badge.svg)](https://github.com/keshav-const/rasta-api/actions/workflows/ci.yml)
 
-A **provenance-first cultural data API for India.** 4,900+ creator-verified places
-*and* living traditions (crafts, festivals, cuisines, folk sports), where **every claim
-cites its source** — queryable by humans and by AI agents.
+A **provenance-first cultural data API for India.** 8,100+ creator-verified places
+*and* living traditions (crafts, festivals, cuisines, folk sports, dance & folk theatre),
+where **every claim cites its source** — queryable by humans and by AI agents. ~1,800 of
+those entities are non-place cultural traditions; physical places are ~93% geocoded for
+map/radius queries.
 
 The Go service over Rasta's verified knowledge graph. Read-only in M1; auth, plans,
 rate-limiting and billing land in later milestones (see [`POSITIONING.md`](./POSITIONING.md)).
@@ -60,8 +62,9 @@ curl -H "X-API-Key: khoj_..." https://khoj-ibli.onrender.com/v1/places
 ```
 
 The response echoes your tier in the **`X-Plan`** header; an invalid/revoked key returns
-`401 invalid_key`. Keys are stored as **sha256 hashes only**. Mint one (dev tool until the
-portal lands in M3):
+`401 invalid_key`. Keys are stored as **sha256 hashes only**. The self-serve **developer
+portal (M3, shipped)** is the normal way to mint and revoke keys and watch per-key usage;
+`cmd/mintkey` remains as a local/admin fallback:
 
 ```bash
 go run ./cmd/mintkey -plan pro -name "my app"   # prints the raw key once
@@ -185,4 +188,11 @@ gitignored and `.dockerignore`d, so secrets never enter the image.
   pagination + OpenAPI/Swagger UI + Docker, deployed on Render.
 - **M2 (scalable layer)** ✅ — API-key auth → plans, Redis rate limiting + anti-scraping,
   response caching (ETag/304), unit tests + GitHub Actions CI.
-- **Next:** Feature C (MCP server + NL query), M3 (developer portal), M4 (Razorpay paywall).
+- **M3 (developer portal)** ✅ — Supabase-Auth signup/login, dashboard to create/revoke
+  keys and watch per-key usage, API reference rendered from the OpenAPI spec (Scalar). The
+  portal is the Next.js app in the Rasta repo's `web/` (deployed on Vercel), which also
+  hosts the live landing page + interactive explorer that dogfoods this API.
+- **M4 (Razorpay paywall)** ✅ — Free/Pro/Enterprise plans, subscription checkout + webhook
+  that flips a key's plan (the Go API reads the plan fresh per request, so no API change was
+  needed). Functionality is complete; live Razorpay keys are added in the portal env to go live.
+- **Next:** M5 (consumer site that browses the graph) · M6 (polish, custom domains, SDK).

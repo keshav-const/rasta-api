@@ -8,9 +8,9 @@ small "why" calls; this records the big one.
 
 ## The one-liner (use this on the resume / README)
 
-> **Rasta — a provenance-first cultural data API for India.** 4,500+ creator-verified
-> places *and* living traditions (crafts, festivals, cuisines, folk sports), where
-> **every claim cites its source** — queryable by humans and by AI agents.
+> **Rasta — a provenance-first cultural data API for India.** 8,100+ creator-verified
+> places *and* living traditions (crafts, festivals, cuisines, folk sports, dance & folk
+> theatre), where **every claim cites its source** — queryable by humans and by AI agents.
 
 Not "a REST API in Go." The Go API is the *vehicle*; the **verified, sourced dataset
 nobody else has** is the product.
@@ -100,29 +100,32 @@ per entity: how many *independent* sources back it, across how many platforms, h
 
 ---
 
-## Status — what's done
+## Status — what's done (as of 2026-11-16)
 
-- **Data / schema (M0):** 4,500+ entities; cultural types incl. first-class `sport`;
-  `country` field; destinations; the **evidence model** (entity ↔ sources ↔ claims).
-- **API core (M1), partial:** scaffold (chi + pgxpool + config), DB-aware `/healthz`,
-  `/v1/stats`, `/v1/places` (filters + paging), **`/v1/places/{slug}` + inline
-  evidence** (receipts), one JSON envelope + error model, `DECISIONS.md`.
+- **Data / schema (M0)** ✅ — **8,136 active entities** across **870 destinations**, built
+  from **1,454 sources** on 4 platforms (Wikipedia 751, YouTube 409, blogs 267, podcasts 27);
+  cultural types incl. first-class `sport`; `country` field; the **evidence model** (entity ↔
+  sources ↔ claims). ~1,800 entities are non-place traditions (crafts, festivals, cuisines,
+  dishes, dance/performing arts, art forms, sports); physical places are **~93% geocoded**.
+- **API core (M1)** ✅ — `/healthz`, `/v1/stats`, `/v1/places` (filters + **keyset
+  pagination**), **`/v1/places/{slug}` + inline evidence** (receipts), `/v1/cities`,
+  `/v1/entities?type=`, trust + freshness, **geo (`near`/`bbox`) + fuzzy (`pg_trgm`) search**,
+  one JSON envelope + error model, **swaggo OpenAPI + Swagger UI**, Dockerfile, **live on Render**.
+- **Scalable layer (M2)** ✅ — API-key auth → plan → **plan-aware rate limiting** (Redis
+  sliding window) + anti-scraping, **caching (ETag + Redis, 304)**, usage counters, logging,
+  **tests + GitHub Actions CI**.
+- **Developer portal (M3)** ✅ — Supabase-Auth signup/login; dashboard to **create/revoke
+  keys** + **per-key usage**; API reference rendered from the OpenAPI spec (Scalar); live
+  landing page + interactive explorer that dogfoods the API. (Next.js `web/`, on Vercel.)
+- **Razorpay paywall (M4)** ✅ — Free/Pro/Enterprise; subscription checkout + **webhook →
+  plan flip** (Go reads the plan fresh per request, so zero API change). Functionality
+  complete; live keys are added to the portal env to go live.
 
-## Roadmap — re-sequenced around the trio
+## Roadmap — remaining
 
-- **M1 (finish the core):** `/v1/cities`, `/v1/entities?type=`, **cursor/keyset
-  pagination**, **swaggo OpenAPI + Swagger UI**, Dockerfile, **deploy on Render**.
-  *Fold in Feature A's `trust score` + `min_corroboration` here (headline early).*
-- **M1.5 — Feature A (provenance):** corroboration/trust scoring as a first-class,
-  documented, filterable feature across endpoints.
-- **M2 (scalable layer):** API-key auth → plan → **plan-aware rate limiting** (Redis
-  sliding window), **caching (ETag + Redis)**, usage counters, logging, **tests + CI**.
-- **M2.5 — Feature B (geo + hybrid search):** `near`/`bbox` + `pg_trgm`/full-text.
-- **M3:** developer portal (Supabase Auth, key management, usage, playground).
-- **M4:** Razorpay paywall (test → live); plan-gated fields (e.g. full evidence = Pro).
-- **M4.5 — Feature C (MCP + NL query):** the AI-native showcase.
-- **M5:** consumer site modernization (dogfood the live API; maps + multi-source).
-- **M6:** polish — load-test numbers, writeups, custom domains, final QA.
+- **M5:** consumer site modernization (dogfood the live API; maps + multi-source POI pages).
+- **M6:** polish — load-test numbers, writeups, custom domains, SDK/snippets, final QA.
+- **Feature C (optional showcase):** MCP server + natural-language query (AI-native).
 
 ---
 

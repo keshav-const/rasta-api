@@ -12,8 +12,8 @@ bottom once and you'll understand the whole product.
 
 ## 1. What this service is
 
-Khoj is a **read-only HTTP JSON API** over a verified cultural graph of India (4,900+ places
-and traditions, each citing its sources). A request comes in → it's authenticated to a plan →
+Khoj is a **read-only HTTP JSON API** over a verified cultural graph of India (8,100+ places
+and traditions — ~1,800 of them non-place cultural traditions — each citing its sources). A request comes in → it's authenticated to a plan →
 rate-limited → maybe served from cache → otherwise a handler runs a SQL query → the rows become
 JSON. That's the whole job. Everything below is in service of doing that **safely, cheaply, and
 fast**, and of making the two things nobody else has — **provenance (trust)** and **freshness** —
