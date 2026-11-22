@@ -272,21 +272,24 @@ func (a *api) getPlace(w http.ResponseWriter, req *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "no place with that slug")
 		return
 	}
-	// Full structured evidence (the per-source extracted `claims`, plus creator
-	// attribution) is a Pro+ feature. Anonymous/free callers still get every source —
-	// the "receipts": platform, title, url, stance — so the provenance story holds, but
-	// not the extracted claim data, which is the valuable structured product and the
-	// main bulk-scrape target. The documented feature gate is now actually enforced.
+	// Full structured claims are a Pro+ feature, but anonymous/free callers still get a
+	// TEASER: every source (the "receipts": platform, title, url, creator, stance) PLUS
+	// the extracted claims from the single top (best-corroborated) source. Evidence is
+	// ordered best-first, so index 0 is that top source. Pro/Enterprise get every
+	// source's claims. This keeps the provenance story visible to everyone (and the demo
+	// rich without a key) while making "see every source's claims" the real Pro upsell.
 	plan := auth.PlanFromContext(req.Context())
 	if !plan.FullEvidence {
 		for i := range place.Evidence {
+			if i == 0 {
+				continue // teaser: keep the top source's claims
+			}
 			place.Evidence[i].Claims = json.RawMessage("[]")
-			place.Evidence[i].Source.Creator = nil
 		}
 	}
 	meta := map[string]any{
 		"evidence_count": len(place.Evidence),
-		"full_evidence":  plan.FullEvidence,
+		"full_evidence":  plan.FullEvidence, // false -> claims are the top-source teaser only
 	}
 	httpx.JSON(w, http.StatusOK, place, meta)
 }
