@@ -22,6 +22,16 @@ func TestComputeTrust(t *testing.T) {
 	if computeTrust(4, 1, nil).Score >= computeTrust(4, 3, nil).Score {
 		t.Error("platform diversity should raise the score")
 	}
+	// Guard: 0 platforms / 0 sources must never produce a negative score.
+	if got := computeTrust(0, 0, nil).Score; got != 0 {
+		t.Errorf("no evidence: want 0, got %v", got)
+	}
+	// The score always stays within [0,1].
+	for _, c := range []struct{ s, p int }{{0, 0}, {1, 0}, {1, 1}, {4, 2}, {99, 9}} {
+		if got := computeTrust(c.s, c.p, nil).Score; got < 0 || got > 1 {
+			t.Errorf("score out of [0,1]: sources=%d platforms=%d -> %v", c.s, c.p, got)
+		}
+	}
 }
 
 func TestComputeFreshnessEnduringIsNil(t *testing.T) {

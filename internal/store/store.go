@@ -75,13 +75,16 @@ type Trust struct {
 // The weights live here (not in the DB) so they're one testable place to tune.
 func computeTrust(sources, platforms int, latest *time.Time) Trust {
 	breadth := math.Min(float64(sources), 4) / 4
-	diversity := math.Min(float64(platforms-1), 2) / 2 // 1 platform -> 0, 3+ -> 1
+	// 1 platform -> 0, 3+ -> 1. The max(…,0) guards platforms==0 (an entity with no
+	// evidence), which would otherwise make diversity negative and drag the score below
+	// zero. Score is clamped to [0,1] too, so it can never go negative.
+	diversity := math.Min(math.Max(float64(platforms-1), 0), 2) / 2
 	var latestStr *string
 	if latest != nil {
 		s := latest.Format("2006-01-02")
 		latestStr = &s
 	}
-	score := 0.70*breadth + 0.30*diversity
+	score := clamp01(0.70*breadth + 0.30*diversity)
 	return Trust{
 		Sources:      sources,
 		Platforms:    platforms,

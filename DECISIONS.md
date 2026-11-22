@@ -412,3 +412,21 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
   short and the pool reconnects as needed. Use the IPv4 session-pooler URL, not the
   IPv6 direct endpoint.
 - **Revisit when:** never — this is a hard constraint of the hosting.
+
+### Audit P1 fixes — enforce the evidence gate, clamp trust, open CORS for keys (2026-11-22)
+- **Decision:** (a) CORS now allows `X-API-Key` + `Authorization` so a browser app can
+  call the API with its key; (b) `computeTrust` clamps to `[0,1]` and guards
+  `platforms==0` (it could previously go negative); (c) the documented **`FullEvidence`**
+  plan gate is now actually enforced in `GetPlace`'s handler — anonymous/free callers get
+  every source (the "receipts": platform/title/url/stance) but not the per-source
+  extracted `claims` or creator attribution, which are Pro+. `meta.full_evidence` tells a
+  caller which tier they got.
+- **Why:** these were flagged by an external audit (see `AUDIT-REMEDIATION.md` in the data
+  repo). The evidence gate was modeled + advertised but unenforced, so Pro's headline
+  feature was free; the claims are also the most valuable structured data and the main
+  bulk-scrape target. Gating claims (not the whole source list) keeps the public demo's
+  provenance story intact while making the paid tier real.
+- **Note:** the consumer demo site dogfoods the API anonymously, so it now sends an
+  optional server-side `KHOJ_API_KEY` (pro) to keep showing full claims.
+- **Revisit when:** if we want finer-grained gating (e.g. per-field redaction) or a
+  metered "N full places/day" free allowance instead of a hard claims cut.

@@ -34,6 +34,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -108,7 +109,10 @@ func main() {
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins: []string{"*"},
 		AllowedMethods: []string{"GET", "OPTIONS"},
-		AllowedHeaders: []string{"Accept", "Content-Type"},
+		// Allow the API-key headers through preflight, so a browser app can call the
+		// API with its key (X-API-Key or Authorization: Bearer). Without these a keyed
+		// cross-origin fetch fails CORS even though the server accepts the header.
+		AllowedHeaders: []string{"Accept", "Content-Type", "X-API-Key", "Authorization"},
 		MaxAge:         300,
 	}))
 
@@ -268,7 +272,22 @@ func (a *api) getPlace(w http.ResponseWriter, req *http.Request) {
 		httpx.Error(w, http.StatusNotFound, "not_found", "no place with that slug")
 		return
 	}
-	meta := map[string]any{"evidence_count": len(place.Evidence)}
+	// Full structured evidence (the per-source extracted `claims`, plus creator
+	// attribution) is a Pro+ feature. Anonymous/free callers still get every source —
+	// the "receipts": platform, title, url, stance — so the provenance story holds, but
+	// not the extracted claim data, which is the valuable structured product and the
+	// main bulk-scrape target. The documented feature gate is now actually enforced.
+	plan := auth.PlanFromContext(req.Context())
+	if !plan.FullEvidence {
+		for i := range place.Evidence {
+			place.Evidence[i].Claims = json.RawMessage("[]")
+			place.Evidence[i].Source.Creator = nil
+		}
+	}
+	meta := map[string]any{
+		"evidence_count": len(place.Evidence),
+		"full_evidence":  plan.FullEvidence,
+	}
 	httpx.JSON(w, http.StatusOK, place, meta)
 }
 
