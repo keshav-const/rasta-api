@@ -434,3 +434,23 @@ Format per entry: **Decision → Alternatives → Why → Revisit when**.
   200/day **per IP**, 429 over-limit), not by hard IP bans — see ADR on rate limiting.
 - **Revisit when:** we want finer teaser control (e.g. N claims instead of 1 source) or a
   metered "N full places/day" free allowance.
+
+## ADR: Input validation on read endpoints (audit 3.3 / 6.3) — 2026-11-28
+- **Decision:** `/v1/places`, `/v1/cities`, `/v1/entities` now run `validateQuery` first and
+  return `400 invalid_parameter` with a human-readable reason for malformed input, instead of
+  silently ignoring it. Checks: `sort` against an allow-list (`trust|freshness`); `q` length
+  capped (120); enum-ish filters (`city/country/category/type`) length-capped (60) + charset
+  `[A-Za-z0-9 _-]` (covers "India", "port-blair", "street_food", "performing_art"); numeric
+  filters (`min_sources/min_platforms/min_places`) bounded `[0,10000]`; `limit` must be ≥1;
+  `offset` bounded `[0,100000]` (deeper paging uses the keyset cursor); `max_source_age_days`
+  bounded. Covered by `cmd/api/validate_test.go`.
+- **Why:** this is **defense-in-depth + abuse-prevention, not injection protection** — every
+  value already reaches SQL as a bound `$N` parameter (`store.go`), so injection was already
+  impossible. The gaps were UX/robustness: an unknown `?sort=` was silently dropped to the
+  default (confusing), and an unbounded `q` / giant `offset` could force an expensive scan.
+  Explicit 400s make the contract honest and cut off pathological queries.
+- **Note:** `q`'s charset is deliberately NOT restricted (free-text search legitimately
+  contains apostrophes, etc.); only its length is. `limit` is still additionally clamped to
+  the caller's per-plan `MaxPageSize` after validation.
+- **Revisit when:** we expose a write/search endpoint that needs stricter per-field schemas,
+  or want the enum filters validated against the live DB taxonomy rather than a charset shape.

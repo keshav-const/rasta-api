@@ -36,11 +36,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -220,6 +222,10 @@ func (a *api) stats(w http.ResponseWriter, req *http.Request) {
 // @Router       /v1/places [get]
 func (a *api) listPlaces(w http.ResponseWriter, req *http.Request) {
 	q := req.URL.Query()
+	if msg := validateQuery(q); msg != "" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_parameter", msg)
+		return
+	}
 	limit := clampInt(atoiOr(q.Get("limit"), 20), 1, auth.PlanFromContext(req.Context()).MaxPageSize)
 	offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
 	params := store.PlacesParams{
@@ -309,6 +315,10 @@ func (a *api) getPlace(w http.ResponseWriter, req *http.Request) {
 // @Router       /v1/cities [get]
 func (a *api) listCities(w http.ResponseWriter, req *http.Request) {
 	q := req.URL.Query()
+	if msg := validateQuery(q); msg != "" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_parameter", msg)
+		return
+	}
 	limit := clampInt(atoiOr(q.Get("limit"), 20), 1, auth.PlanFromContext(req.Context()).MaxPageSize)
 	offset := maxInt(atoiOr(q.Get("offset"), 0), 0)
 	params := store.CitiesParams{
@@ -350,6 +360,10 @@ func (a *api) listCities(w http.ResponseWriter, req *http.Request) {
 // @Router       /v1/entities [get]
 func (a *api) listEntities(w http.ResponseWriter, req *http.Request) {
 	q := req.URL.Query()
+	if msg := validateQuery(q); msg != "" {
+		httpx.Error(w, http.StatusBadRequest, "invalid_parameter", msg)
+		return
+	}
 	typ := q.Get("type")
 	if typ == "" {
 		types, err := a.db.ListEntityTypes(req.Context())
@@ -504,4 +518,75 @@ func applyGeo(q url.Values, p *store.PlacesParams) {
 			}
 		}
 	}
+}
+
+// Input-validation limits for the read endpoints. These are defense-in-depth and
+// abuse-prevention, NOT injection protection: every value already reaches SQL as a
+// bound parameter (store.go), so injection is impossible by construction. The point
+// here is to reject malformed/pathological input with an explicit 400 instead of
+// silently ignoring it (an unknown sort) or letting it run an expensive scan (a
+// multi-KB q, a billion-row offset). Audit items 3.3 / 6.3.
+const (
+	maxQLen          = 120    // a search term, not a document
+	maxFilterLen     = 60     // city/country/category/type are short enum-ish values
+	maxCount         = 10000  // nothing in the graph is corroborated by >10k sources
+	maxOffset        = 100000 // past this, callers must use the keyset cursor
+	maxSourceAgeDays = 36500  // 100 years — effectively "any", but bounded
+)
+
+// allowedSorts is the ORDER BY allow-list. store.go maps these to fixed clauses and
+// ignores anything else; validating here turns that silent fallback into a clean 400.
+var allowedSorts = map[string]bool{"": true, "trust": true, "freshness": true}
+
+// enumIdent is the shape of our enum-ish filters: destination slugs ("port-blair"),
+// country ("India"), poi_category ("street_food"), entity_type ("performing_art").
+// Letters/digits/space/underscore/hyphen only — rejects quotes, semicolons, parens,
+// '%', etc. with a clear message (again: not needed for injection, just hygiene).
+var enumIdent = regexp.MustCompile(`^[A-Za-z0-9 _-]+$`)
+
+// validateQuery returns a human-readable reason the query params are invalid, or ""
+// if they're acceptable. Callers 400 with the reason. It never restricts q's charset
+// (free-text search may contain apostrophes, etc.) — only its length.
+func validateQuery(q url.Values) string {
+	if !allowedSorts[q.Get("sort")] {
+		return "invalid sort: expected one of trust, freshness (or omit for best match)"
+	}
+	if len(q.Get("q")) > maxQLen {
+		return fmt.Sprintf("q is too long: max %d characters", maxQLen)
+	}
+	for _, f := range []string{"city", "country", "category", "type"} {
+		v := q.Get(f)
+		if v == "" {
+			continue
+		}
+		if len(v) > maxFilterLen {
+			return fmt.Sprintf("%s is too long: max %d characters", f, maxFilterLen)
+		}
+		if !enumIdent.MatchString(v) {
+			return fmt.Sprintf("%s has invalid characters: use letters, digits, spaces, - or _", f)
+		}
+	}
+	for _, n := range []string{"min_sources", "min_platforms", "min_places"} {
+		if s := q.Get(n); s != "" {
+			if v, err := strconv.Atoi(s); err != nil || v < 0 || v > maxCount {
+				return fmt.Sprintf("%s must be an integer between 0 and %d", n, maxCount)
+			}
+		}
+	}
+	if s := q.Get("limit"); s != "" {
+		if v, err := strconv.Atoi(s); err != nil || v < 1 {
+			return "limit must be a positive integer"
+		}
+	}
+	if s := q.Get("offset"); s != "" {
+		if v, err := strconv.Atoi(s); err != nil || v < 0 || v > maxOffset {
+			return fmt.Sprintf("offset must be between 0 and %d — use cursor for deeper pagination", maxOffset)
+		}
+	}
+	if s := q.Get("max_source_age_days"); s != "" {
+		if v, err := strconv.Atoi(s); err != nil || v < 0 || v > maxSourceAgeDays {
+			return fmt.Sprintf("max_source_age_days must be between 0 and %d", maxSourceAgeDays)
+		}
+	}
+	return ""
 }
